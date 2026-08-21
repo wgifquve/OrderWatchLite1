@@ -1,412 +1,253 @@
-﻿using Binance.Net;
-using Binance.Net.Clients;
-using Binance.Net.Enums;
-using Binance.Net.Objects;
-using Binance.Net.Objects.Models.Futures; // 补充了模型命名空间，确保兼容性
-using CryptoExchange.Net.Authentication;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using Binance.Net.Clients;
+using Binance.Net.Enums;
+using CryptoExchange.Net.Authentication;
 
 namespace OrderWatchLite.Services
 {
-    /// <summary>
-    /// Binance Futures API 服务
-    /// Binance.Net 13.4 - 仅使用 Trading 端点
-    /// </summary>
-    public class BinanceApiService : IDisposable
+    public class BinanceApiService
     {
         private readonly BinanceRestClient _restClient;
-        private readonly bool _isTestNet;
 
-        private decimal _walletBalance;
-        private decimal _currentPrice;
-
-        public event Action<decimal>? OnBalanceUpdated;
-        public event Action<decimal>? OnPriceUpdated;
-
-        public BinanceApiService(
-            string apiKey,
-            string apiSecret,
-            bool isTestNet = true)
+        public BinanceApiService(string apiKey, string apiSecret, bool useTestNet = true)
         {
-            _isTestNet = isTestNet;
-
-            _restClient = new BinanceRestClient(options =>
+            // 官方文档写法：使用 BinanceRestClientOptions
+            var options = new BinanceRestClientOptions
             {
-                options.ApiCredentials = new BinanceCredentials(apiKey, apiSecret);
-                options.Environment = isTestNet ? BinanceEnvironment.Testnet : BinanceEnvironment.Live;
-            });
+                ApiCredentials = new ApiCredentials(apiKey, apiSecret),
+                SpotOptions = { BaseAddress = useTestNet ? "https://testnet.binance.vision" : "https://api.binance.com" },
+                UsdFuturesOptions = { BaseAddress = useTestNet ? "https://testnet.binancefuture.com" : "https://fapi.binance.com" }
+            };
+            _restClient = new BinanceRestClient(options);
         }
 
-        // ============================================================
-        // 余额
-        // ============================================================
-        public async Task<decimal> GetBalanceAsync()
+        /// <summary>
+        /// 获取所有 USDT 合约交易对
+        /// 官方文档：BinanceFuturesUsdtSymbol 使用 Name 属性[reference:8]
+        /// </summary>
+        public async Task<List<string>> GetAllSymbolsAsync()
         {
             try
             {
-                var result = await _restClient.UsdFuturesApi.Account.GetAccountInfoV3Async();
-
-                if (!result.Success || result.Data == null)
+                var result = await _restClient.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync();
+                if (result.Success && result.Data != null)
                 {
-                    throw new Exception(result.Error?.Message ?? "获取账户信息失败");
+                    return result.Data.Symbols
+                        .Where(s => s.Status == SymbolStatus.Trading && s.Name.EndsWith("USDT"))
+                        .Select(s => s.Name)
+                        .OrderBy(s => s)
+                        .ToList();
                 }
-
-                var usdt = result.Data.Assets.FirstOrDefault(x => x.Asset.Equals("USDT", StringComparison.OrdinalIgnoreCase));
-
-                if (usdt == null)
-                {
-                    throw new Exception("没有找到 USDT 余额");
-                }
-
-                _walletBalance = usdt.WalletBalance;
-                OnBalanceUpdated?.Invoke(_walletBalance);
-
-                return _walletBalance;
+                return new List<string>();
             }
-            catch (Exception ex)
-            {
-                throw new Exception($"获取余额失败：{ex.Message}", ex);
-            }
+            catch { return new List<string>(); }
         }
 
-        // ============================================================
-        // 当前价格
-        // ============================================================
-        public async Task<decimal> GetCurrentPriceAsync(string symbol = "ETHUSDT")
+        /// <summary>
+        /// 获取当前价格
+        /// </summary>
+        public async Task<decimal?> GetCurrentPriceAsync(string symbol)
         {
             try
             {
                 var result = await _restClient.UsdFuturesApi.ExchangeData.GetTickerAsync(symbol);
-
-                if (!result.Success || result.Data == null)
-                {
-                    throw new Exception(result.Error?.Message ?? "获取价格失败");
-                }
-
-                _currentPrice = result.Data.LastPrice;
-                OnPriceUpdated?.Invoke(_currentPrice);
-
-                return _currentPrice;
+                if (result.Success && result.Data != null)
+                    return result.Data.LastPrice;
+                return null;
             }
-            catch (Exception ex)
-            {
-                throw new Exception($"获取 {symbol} 价格失败：{ex.Message}", ex);
-            }
+            catch { return null; }
         }
 
-        // ============================================================
-        // 设置杠杆
-        // ============================================================
-        public async Task<bool> SetLeverageAsync(string symbol, int leverage)
+        /// <summary>
+        /// 获取账户余额（USDT）
+        /// </summary>
+        public async Task<decimal?> GetAccountBalanceAsync()
         {
             try
             {
-                if (leverage < 1)
-                    throw new ArgumentOutOfRangeException(nameof(leverage));
-
-                var result = await _restClient.UsdFuturesApi.Account.ChangeInitialLeverageAsync(symbol, leverage);
-
-                if (!result.Success)
+                var result = await _restClient.UsdFuturesApi.Account.GetAccountInfoV3Async();
+                if (result.Success && result.Data != null)
                 {
-                    throw new Exception(result.Error?.Message ?? "设置杠杆失败");
+                    var asset = result.Data.Assets.FirstOrDefault(a => a.Asset == "USDT");
+                    return asset?.WalletBalance ?? 0;
                 }
-
-                return true;
+                return null;
             }
-            catch (Exception ex)
-            {
-                throw new Exception($"设置 {symbol} {leverage}X 杠杆失败：{ex.Message}", ex);
-            }
+            catch { return null; }
         }
 
-        // ============================================================
-        // 市价开仓
-        // ============================================================
-        public async Task<(bool success, long orderId, decimal avgPrice, string errorMessage)> PlaceMarketOrderAsync(
-            string symbol,
-            OrderSide side,
-            decimal quantity,
-            int leverage = 20)
+        /// <summary>
+        /// 获取步长信息
+        /// </summary>
+        public async Task<LotSizeInfo?> GetLotSizeInfoAsync(string symbol)
         {
             try
             {
-                if (quantity <= 0)
+                var result = await _restClient.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync(symbol);
+                if (result.Success && result.Data != null)
                 {
-                    return (false, 0, 0, "下单数量必须大于 0");
+                    var symbolData = result.Data.Symbols.FirstOrDefault(s => s.Name == symbol);
+                    if (symbolData != null)
+                    {
+                        var filter = symbolData.LotSizeFilter;
+                        return new LotSizeInfo
+                        {
+                            StepSize = filter.StepSize,
+                            MinQty = filter.MinQuantity,
+                            MaxQty = filter.MaxQuantity
+                        };
+                    }
                 }
+                return null;
+            }
+            catch { return null; }
+        }
 
-                await SetLeverageAsync(symbol, leverage);
-
-                var result = await _restClient.UsdFuturesApi.Trading.PlaceOrderAsync(
+        /// <summary>
+        /// 下单并挂止损单
+        /// 官方文档：使用 UsdFuturesApi.Trading.PlaceOrderAsync[reference:9]
+        /// 止损单使用 FuturesOrderType.Stop[reference:11]
+        /// </summary>
+        public async Task<(bool success, string orderId, string stopOrderId, string error)>
+            PlaceOrderWithStopLossAsync(
+                string symbol,
+                OrderSide side,
+                decimal quantity,
+                decimal stopPrice)
+        {
+            try
+            {
+                // 1. 下市价主单（官方写法）
+                var mainResult = await _restClient.UsdFuturesApi.Trading.PlaceOrderAsync(
                     symbol: symbol,
                     side: side,
                     type: FuturesOrderType.Market,
                     quantity: quantity,
-                    positionSide: PositionSide.Both);
+                    newClientOrderId: Guid.NewGuid().ToString()
+                );
 
-                if (!result.Success || result.Data == null)
+                if (!mainResult.Success)
                 {
-                    return (false, 0, 0, result.Error?.Message ?? "市价下单失败");
+                    return (false, string.Empty, string.Empty, mainResult.Error?.Message ?? "主单下单失败");
                 }
 
-                decimal avgPrice = result.Data.AveragePrice;
-                if (avgPrice <= 0)
-                    avgPrice = _currentPrice;
+                string mainOrderId = mainResult.Data.Id.ToString();
 
-                return (true, result.Data.Id, avgPrice, string.Empty);
-            }
-            catch (Exception ex)
-            {
-                return (false, 0, 0, ex.Message);
-            }
-        }
-
-        // ============================================================
-        // 获取交易步长
-        // ============================================================
-        public async Task<decimal> GetStepSizeAsync(string symbol = "ETHUSDT")
-        {
-            try
-            {
-                var result = await _restClient.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync();
-
-                if (!result.Success || result.Data == null)
-                    return 0.001m;
-
-                var sym = result.Data.Symbols.FirstOrDefault(x => x.Name == symbol);
-
-                if (sym?.LotSizeFilter == null)
-                    return 0.001m;
-
-                return sym.LotSizeFilter.StepSize;
-            }
-            catch
-            {
-                return 0.001m;
-            }
-        }
-
-        // ============================================================
-        // 获取数量规则
-        // ============================================================
-        public async Task<(decimal StepSize, decimal MinQty, decimal MaxQty)?> GetLotSizeInfoAsync(string symbol = "ETHUSDT")
-        {
-            try
-            {
-                var result = await _restClient.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync();
-
-                if (!result.Success || result.Data == null)
-                    return null;
-
-                var sym = result.Data.Symbols.FirstOrDefault(x => x.Name == symbol);
-
-                if (sym?.LotSizeFilter == null)
-                    return null;
-
-                return (sym.LotSizeFilter.StepSize, sym.LotSizeFilter.MinQuantity, sym.LotSizeFilter.MaxQuantity);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        // ============================================================
-        // 获取交易对
-        // ============================================================
-        public async Task<List<string>> GetSymbolListAsync()
-        {
-            try
-            {
-                var result = await _restClient.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync();
-
-                if (!result.Success || result.Data == null)
-                {
-                    throw new Exception(result.Error?.Message ?? "获取交易对失败");
-                }
-
-                return result.Data.Symbols
-                    .Where(x => x.Name.EndsWith("USDT", StringComparison.OrdinalIgnoreCase))
-                    .Select(x => x.Name)
-                    .OrderBy(x => x)
-                    .ToList();
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"获取交易对失败：{ex.Message}", ex);
-            }
-        }
-
-        // ============================================================
-        // 止损
-        // ============================================================
-        public async Task<(bool success, long orderId, string errorMessage)> PlaceStopLossOrderAsync(
-            string symbol,
-            OrderSide side,
-            decimal quantity,
-            decimal stopPrice,
-            bool reduceOnly = true)
-        {
-            try
-            {
-                if (quantity <= 0)
-                {
-                    return (false, 0, "止损数量必须大于 0");
-                }
-
-                if (stopPrice <= 0)
-                {
-                    return (false, 0, "止损价格必须大于 0");
-                }
-
-                var result = await _restClient.UsdFuturesApi.Trading.PlaceOrderAsync(
+                // 2. 挂止损市价单（reduce only）
+                OrderSide closeSide = side == OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy;
+                var stopResult = await _restClient.UsdFuturesApi.Trading.PlaceOrderAsync(
                     symbol: symbol,
-                    side: side,
-                    type: FuturesOrderType.StopMarket,
+                    side: closeSide,
+                    type: FuturesOrderType.Stop,
                     quantity: quantity,
                     stopPrice: stopPrice,
-                    reduceOnly: reduceOnly,
-                    positionSide: PositionSide.Both);
+                    price: stopPrice,
+                    timeInForce: TimeInForce.GoodTillCanceled,
+                    newClientOrderId: $"SL_{Guid.NewGuid():N}".Substring(0, 32),
+                    reduceOnly: true
+                );
 
-                if (!result.Success || result.Data == null)
+                if (!stopResult.Success)
                 {
-                    return (false, 0, result.Error?.Message ?? "止损单创建失败");
+                    return (true, mainOrderId, string.Empty, $"主单成功但止损单失败: {stopResult.Error?.Message}");
                 }
 
-                return (true, result.Data.Id, string.Empty);
+                return (true, mainOrderId, stopResult.Data.Id.ToString(), string.Empty);
             }
             catch (Exception ex)
             {
-                return (false, 0, ex.Message);
+                return (false, string.Empty, string.Empty, ex.Message);
             }
         }
 
-        // ============================================================
-        // 取消订单
-        // ============================================================
-        public async Task<bool> CancelOrderAsync(string symbol, long orderId)
+        /// <summary>
+        /// 平仓（市价，只减仓）
+        /// </summary>
+        public async Task<(bool success, string orderId, string error)> ClosePositionAsync(
+            string symbol,
+            decimal quantity,
+            OrderSide closeSide)
         {
             try
             {
-                var result = await _restClient.UsdFuturesApi.Trading.CancelOrderAsync(symbol, orderId);
-                return result.Success;
+                var result = await _restClient.UsdFuturesApi.Trading.PlaceOrderAsync(
+                    symbol: symbol,
+                    side: closeSide,
+                    type: FuturesOrderType.Market,
+                    quantity: quantity,
+                    newClientOrderId: $"CLOSE_{Guid.NewGuid():N}".Substring(0, 32),
+                    reduceOnly: true
+                );
+
+                if (!result.Success)
+                {
+                    return (false, string.Empty, result.Error?.Message ?? "平仓失败");
+                }
+
+                return (true, result.Data.Id.ToString(), string.Empty);
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
+                return (false, string.Empty, ex.Message);
             }
         }
 
-        // ============================================================
-        // 【核心修复处】获取当前持仓
-        // ============================================================
-        public async Task<List<BinancePositionInfo>> GetPositionsAsync()
+        /// <summary>
+        /// 获取所有持仓（非零）
+        /// 使用 Trading.GetPositionsAsync 获取持仓信息[reference:12]
+        /// </summary>
+        public async Task<List<PositionInfo>> GetPositionsAsync()
         {
             try
             {
+                // 使用 Trading.GetPositionsAsync 获取持仓[reference:13]
                 var result = await _restClient.UsdFuturesApi.Trading.GetPositionsAsync();
-
                 if (!result.Success || result.Data == null)
-                {
-                    Debug.WriteLine($"[GetPositions] 失败: {result.Error?.Message}");
-                    return new List<BinancePositionInfo>();
-                }
-
-                var positions = new List<BinancePositionInfo>();
-
-                foreach (var p in result.Data)
-                {
-                    // 【修复说明】：BinancePositionV3 模型中，表示数量的属性叫 PositionAmt，而不是 Quantity。
-                    // 注意：PositionAmt 是带符号的，正数表示做多(Long)，负数表示做空(Short)。
-                    if (p.PositionAmt == 0)
-                        continue;
-
-                    positions.Add(new BinancePositionInfo
-                    {
-                        Symbol = p.Symbol,
-                        Quantity = p.PositionAmt, // 这里已修复为 PositionAmt
-                        EntryPrice = p.EntryPrice,
-                        Leverage = p.Leverage ?? 0m
-                    });
-                }
-
-                return positions;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[GetPositions] 异常: {ex.Message}");
-                return new List<BinancePositionInfo>();
-            }
-        }
-
-        // ============================================================
-        // 获取所有挂单
-        // ============================================================
-        public async Task<List<BinanceOpenOrderInfo>> GetAllOpenOrdersAsync()
-        {
-            try
-            {
-                var result = await _restClient.UsdFuturesApi.Trading.GetOpenOrdersAsync();
-
-                if (!result.Success || result.Data == null)
-                {
-                    Debug.WriteLine($"[GetOpenOrders] 失败: {result.Error?.Message}");
-                    return new List<BinanceOpenOrderInfo>();
-                }
+                    return new List<PositionInfo>();
 
                 return result.Data
-                    .Select(o => new BinanceOpenOrderInfo
+                    .Where(p => p.Quantity != 0)
+                    .Select(p => new PositionInfo
                     {
-                        Symbol = o.Symbol,
-                        Type = o.Type.ToString(),
-                        Side = o.Side.ToString(),
-                        StopPrice = o.StopPrice,
-                        Quantity = o.Quantity,
-                        Id = o.Id
+                        Symbol = p.Symbol,
+                        Quantity = Math.Abs(p.Quantity),
+                        Side = p.Quantity > 0 ? OrderSide.Buy : OrderSide.Sell,
+                        EntryPrice = p.EntryPrice,
+                        MarkPrice = p.MarkPrice,
+                        UnrealizedPnl = p.UnrealizedPnl,
+                        Leverage = p.Leverage,
+                        PnlPercent = p.EntryPrice != 0
+                            ? (p.Quantity > 0
+                                ? (p.MarkPrice - p.EntryPrice) / p.EntryPrice * 100
+                                : (p.EntryPrice - p.MarkPrice) / p.EntryPrice * 100)
+                            : 0
                     })
                     .ToList();
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[GetOpenOrders] 异常: {ex.Message}");
-                return new List<BinanceOpenOrderInfo>();
-            }
-        }
-
-        // ============================================================
-        // Dispose
-        // ============================================================
-        public void Dispose()
-        {
-            _restClient.Dispose();
+            catch { return new List<PositionInfo>(); }
         }
     }
 
-    // ================================================================
-    // Binance 内部统一持仓模型 (保持不变，供你的其他代码调用)
-    // ================================================================
-    public class BinancePositionInfo
+    public class LotSizeInfo
+    {
+        public decimal StepSize { get; set; }
+        public decimal MinQty { get; set; }
+        public decimal MaxQty { get; set; }
+    }
+
+    public class PositionInfo
     {
         public string Symbol { get; set; } = string.Empty;
         public decimal Quantity { get; set; }
+        public OrderSide Side { get; set; }
         public decimal EntryPrice { get; set; }
-        public decimal Leverage { get; set; }
-    }
-
-    // ================================================================
-    // Binance 内部统一挂单模型 (保持不变)
-    // ================================================================
-    public class BinanceOpenOrderInfo
-    {
-        public string Symbol { get; set; } = string.Empty;
-        public string Type { get; set; } = string.Empty;
-        public string Side { get; set; } = string.Empty;
-        public decimal? StopPrice { get; set; }
-        public decimal Quantity { get; set; }
-        public long Id { get; set; }
+        public decimal MarkPrice { get; set; }
+        public decimal UnrealizedPnl { get; set; }
+        public int Leverage { get; set; }
+        public decimal PnlPercent { get; set; }
+        public string DisplayText { get; set; } = string.Empty;
     }
 }
