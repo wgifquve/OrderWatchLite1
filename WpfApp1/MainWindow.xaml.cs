@@ -57,7 +57,6 @@ namespace OrderWatchLite
 
         private readonly ObservableCollection<string> _logEntries = new();
 
-        // 防止多个刷新同时执行
         private bool _isRefreshing;
 
         // ============================================================
@@ -75,24 +74,31 @@ namespace OrderWatchLite
                 _apiSecret,
                 _useTestNet);
 
-            SliderPosition.ValueChanged += SliderPosition_ValueChanged;
-            SliderLeverage.ValueChanged += SliderLeverage_ValueChanged;
+            SliderPosition.ValueChanged +=
+                SliderPosition_ValueChanged;
 
-            TxtBreakEvenPercent.TextChanged += TxtBreakEvenPercent_TextChanged;
-            TxtStopLossPercent.TextChanged += TxtStopLossPercent_TextChanged;
+            SliderLeverage.ValueChanged +=
+                SliderLeverage_ValueChanged;
+
+            TxtBreakEvenPercent.TextChanged +=
+                TxtBreakEvenPercent_TextChanged;
+
+            TxtStopLossPercent.TextChanged +=
+                TxtStopLossPercent_TextChanged;
 
             _ = LoadSymbolsAsync();
 
-            var timer = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(5)
-            };
+            var timer =
+                new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval =
+                        TimeSpan.FromSeconds(5)
+                };
 
             timer.Tick += async (s, e) =>
             {
                 await UpdatePriceAndBalanceAsync();
 
-                // 保本开启以后，每次价格更新都检查一次
                 if (_isBreakEvenEnabled)
                     await CheckBreakEvenAsync();
             };
@@ -104,11 +110,11 @@ namespace OrderWatchLite
 
             UpdateUI();
 
-            AddLog("🚀 程序启动，连接测试网...");
+            AddLog(
+                "🚀 程序启动，连接测试网...");
 
             _ = UpdatePriceAndBalanceAsync();
 
-            // 启动后主动扫描一次真实持仓
             _ = RefreshPositionsAsync(false);
         }
 
@@ -123,18 +129,22 @@ namespace OrderWatchLite
                 if (_binanceApi == null)
                     return;
 
-                var symbols = await _binanceApi.GetAllSymbolsAsync();
+                var symbols =
+                    await _binanceApi
+                        .GetAllSymbolsAsync();
 
                 CmbSymbol.Items.Clear();
 
                 foreach (var symbol in symbols)
                     CmbSymbol.Items.Add(symbol);
 
-                AddLog($"✅ 加载了 {symbols.Count} 个交易对");
+                AddLog(
+                    $"✅ 加载了 {symbols.Count} 个交易对");
             }
             catch (Exception ex)
             {
-                AddLog($"❌ 加载品种失败: {ex.Message}");
+                AddLog(
+                    $"❌ 加载品种失败: {ex.Message}");
             }
         }
 
@@ -155,11 +165,11 @@ namespace OrderWatchLite
             _selectedSymbol =
                 CmbSymbol.SelectedItem.ToString()!;
 
-            AddLog($"🔄 切换品种至 {_selectedSymbol}");
+            AddLog(
+                $"🔄 切换品种至 {_selectedSymbol}");
 
             UpdateUI();
 
-            // 切换品种以后立即扫描
             await RefreshPositionsAsync(false);
         }
 
@@ -175,22 +185,26 @@ namespace OrderWatchLite
                     return;
 
                 var price =
-                    await _binanceApi.GetCurrentPriceAsync(
-                        _selectedSymbol);
+                    await _binanceApi
+                        .GetCurrentPriceAsync(
+                            _selectedSymbol);
 
                 if (price.HasValue)
                 {
-                    _currentPrice = price.Value;
+                    _currentPrice =
+                        price.Value;
 
                     LblCurrentPrice.Content =
                         _currentPrice.ToString("F2");
                 }
 
                 var balance =
-                    await _binanceApi.GetAccountBalanceAsync();
+                    await _binanceApi
+                        .GetAccountBalanceAsync();
 
                 if (balance.HasValue)
-                    _accountBalance = balance.Value;
+                    _accountBalance =
+                        balance.Value;
 
                 UpdateUI();
 
@@ -204,12 +218,14 @@ namespace OrderWatchLite
             }
             catch (Exception ex)
             {
-                StatusBarConnection.Text = "● 连接失败";
+                StatusBarConnection.Text =
+                    "● 连接失败";
 
                 StatusBarConnection.Foreground =
                     System.Windows.Media.Brushes.Red;
 
-                AddLog($"⚠️ 更新失败: {ex.Message}");
+                AddLog(
+                    $"⚠️ 更新失败: {ex.Message}");
             }
         }
 
@@ -220,7 +236,8 @@ namespace OrderWatchLite
         private void UpdateUI()
         {
             decimal ratio =
-                (decimal)SliderPosition.Value / 100m;
+                (decimal)SliderPosition.Value /
+                100m;
 
             LblPositionPercent.Content =
                 $"{SliderPosition.Value}%";
@@ -235,10 +252,12 @@ namespace OrderWatchLite
                 _accountBalance * ratio;
 
             decimal actualMargin =
-                baseMargin * _selectedQuickRatio;
+                baseMargin *
+                _selectedQuickRatio;
 
             decimal positionValue =
-                actualMargin * leverage;
+                actualMargin *
+                leverage;
 
             LblActualMargin.Content =
                 $"{actualMargin:F2} U";
@@ -272,12 +291,14 @@ namespace OrderWatchLite
             object sender,
             RoutedEventArgs e)
         {
-            var btn = sender as ToggleButton;
+            var btn =
+                sender as ToggleButton;
 
             if (btn == null)
                 return;
 
-            var parent = btn.Parent as Panel;
+            var parent =
+                btn.Parent as Panel;
 
             if (parent != null)
             {
@@ -292,15 +313,20 @@ namespace OrderWatchLite
             }
 
             string content =
-                btn.Content?.ToString()?.TrimEnd('%')
+                btn.Content?
+                    .ToString()?
+                    .TrimEnd('%')
                 ?? string.Empty;
 
-            if (decimal.TryParse(content, out decimal val))
+            if (decimal.TryParse(
+                content,
+                out decimal val))
             {
                 _selectedQuickRatio =
                     val / 100m;
 
-                AddLog($"🔘 快速比例: {content}%");
+                AddLog(
+                    $"🔘 快速比例: {content}%");
 
                 UpdateUI();
             }
@@ -310,12 +336,14 @@ namespace OrderWatchLite
             object sender,
             RoutedEventArgs e)
         {
-            var btn = sender as ToggleButton;
+            var btn =
+                sender as ToggleButton;
 
             if (btn == null)
                 return;
 
-            var parent = btn.Parent as Panel;
+            var parent =
+                btn.Parent as Panel;
 
             if (parent == null)
                 return;
@@ -335,7 +363,6 @@ namespace OrderWatchLite
             if (!anyChecked)
             {
                 _selectedQuickRatio = 1m;
-
                 UpdateUI();
             }
         }
@@ -372,7 +399,8 @@ namespace OrderWatchLite
             LblBreakEvenStatus.Foreground =
                 System.Windows.Media.Brushes.Gray;
 
-            AddLog("🔓 保本关闭");
+            AddLog(
+                "🔓 保本关闭");
         }
 
         private void TxtBreakEvenPercent_TextChanged(
@@ -409,14 +437,16 @@ namespace OrderWatchLite
             object sender,
             RoutedEventArgs e)
         {
-            await ExecuteOrderAsync(OrderSide.Buy);
+            await ExecuteOrderAsync(
+                OrderSide.Buy);
         }
 
         private async void BtnSell_Click(
             object sender,
             RoutedEventArgs e)
         {
-            await ExecuteOrderAsync(OrderSide.Sell);
+            await ExecuteOrderAsync(
+                OrderSide.Sell);
         }
 
         private async Task ExecuteOrderAsync(
@@ -426,56 +456,66 @@ namespace OrderWatchLite
             {
                 if (_binanceApi == null)
                 {
-                    AddLog("❌ API服务未初始化");
+                    AddLog(
+                        "❌ API服务未初始化");
+
                     return;
                 }
 
-                // ====================================================
-                // 关键：
                 // 下单前先扫描 Binance
-                // ====================================================
-
                 await RefreshPositionsAsync(false);
 
                 decimal ratio =
-                    (decimal)SliderPosition.Value / 100m;
+                    (decimal)SliderPosition.Value /
+                    100m;
 
                 decimal baseMargin =
-                    _accountBalance * ratio;
+                    _accountBalance *
+                    ratio;
 
                 decimal actualMargin =
-                    baseMargin * _selectedQuickRatio;
+                    baseMargin *
+                    _selectedQuickRatio;
 
                 int leverage =
                     (int)SliderLeverage.Value;
 
                 decimal positionValue =
-                    actualMargin * leverage;
+                    actualMargin *
+                    leverage;
 
                 if (positionValue <= 0)
                 {
-                    AddLog("⚠️ 仓位价值为0");
+                    AddLog(
+                        "⚠️ 仓位价值为0");
+
                     return;
                 }
 
                 if (_currentPrice <= 0)
                 {
-                    AddLog("⚠️ 当前价格无效");
+                    AddLog(
+                        "⚠️ 当前价格无效");
+
                     return;
                 }
 
                 var stepInfo =
-                    await _binanceApi.GetLotSizeInfoAsync(
-                        _selectedSymbol);
+                    await _binanceApi
+                        .GetLotSizeInfoAsync(
+                            _selectedSymbol);
 
                 if (stepInfo == null)
                 {
-                    AddLog("❌ 无法获取步长信息");
+                    AddLog(
+                        "❌ 无法获取步长信息");
+
                     return;
                 }
 
                 decimal rawQuantity =
-                    positionValue / _currentPrice;
+                    positionValue /
+                    _currentPrice;
 
                 decimal qty =
                     RoundToLotSize(
@@ -484,30 +524,33 @@ namespace OrderWatchLite
 
                 if (qty <= 0)
                 {
-                    AddLog("⚠️ 数量过小为0");
+                    AddLog(
+                        "⚠️ 数量过小为0");
+
                     return;
                 }
 
                 decimal stopPrice =
                     side == OrderSide.Buy
                         ? _currentPrice *
-                          (1m - _stopLossPercent / 100m)
+                          (1m -
+                           _stopLossPercent /
+                           100m)
                         : _currentPrice *
-                          (1m + _stopLossPercent / 100m);
+                          (1m +
+                           _stopLossPercent /
+                           100m);
 
                 AddLog(
                     $"📤 {side} {qty} {_selectedSymbol}");
 
-                // ====================================================
-                // 市价开仓 + 对应保护单
-                // ====================================================
-
                 var result =
-                    await _binanceApi.PlaceOrderWithStopLossAsync(
-                        symbol: _selectedSymbol,
-                        side: side,
-                        quantity: qty,
-                        stopPrice: stopPrice);
+                    await _binanceApi
+                        .PlaceOrderWithStopLossAsync(
+                            symbol: _selectedSymbol,
+                            side: side,
+                            quantity: qty,
+                            stopPrice: stopPrice);
 
                 if (!result.success)
                 {
@@ -520,10 +563,6 @@ namespace OrderWatchLite
                 AddLog(
                     $"✅ 下单成功! 主单: {result.orderId}");
 
-                // ====================================================
-                // 保护单 ID
-                // ====================================================
-
                 long stopOrderId = 0;
 
                 if (!string.IsNullOrWhiteSpace(
@@ -534,15 +573,7 @@ namespace OrderWatchLite
                         out stopOrderId);
                 }
 
-                // ====================================================
-                // 下单完成以后重新扫描 Binance
-                // ====================================================
-
                 await RefreshPositionsAsync(false);
-
-                // ====================================================
-                // 找到实际仓位
-                // ====================================================
 
                 var actualPosition =
                     _currentPositions.FirstOrDefault(
@@ -555,36 +586,54 @@ namespace OrderWatchLite
 
                 decimal actualEntryPrice =
                     actualPosition?.EntryPrice
-                    ?? _currentPrice;
+                    ??
+                    _currentPrice;
 
-                // ====================================================
                 // 新增逻辑保护层
-                // ====================================================
-
                 if (stopOrderId > 0)
                 {
-                    var layer = new Position
-                    {
-                        Symbol = _selectedSymbol,
-                        Side = side,
-                        Quantity = qty,
-                        EntryPrice = actualEntryPrice,
-                        Leverage = leverage,
-                        StopLossPrice = stopPrice,
-                        StopLossOrderId = stopOrderId,
-                        IsBreakEvenTriggered = false,
-                        BreakEvenThreshold =
-                            _breakEvenPercent,
-                        StopLossPercent =
-                            _stopLossPercent,
-                        OpenTime = DateTime.Now
-                    };
+                    var layer =
+                        new Position
+                        {
+                            Symbol =
+                                _selectedSymbol,
 
-                    if (_positionManager.AddPosition(layer))
+                            Side = side,
+
+                            Quantity = qty,
+
+                            EntryPrice =
+                                actualEntryPrice,
+
+                            Leverage =
+                                leverage,
+
+                            StopLossPrice =
+                                stopPrice,
+
+                            StopLossOrderId =
+                                stopOrderId,
+
+                            IsBreakEvenTriggered =
+                                false,
+
+                            BreakEvenThreshold =
+                                _breakEvenPercent,
+
+                            StopLossPercent =
+                                _stopLossPercent,
+
+                            OpenTime =
+                                DateTime.Now
+                        };
+
+                    if (_positionManager
+                        .AddPosition(layer))
                     {
                         AddLog(
                             $"🛡️ 新增保护层: " +
-                            $"{side} {qty} @ {actualEntryPrice:F2}");
+                            $"{side} {qty} @ " +
+                            $"{actualEntryPrice:F2}");
                     }
                     else
                     {
@@ -598,7 +647,6 @@ namespace OrderWatchLite
                         "⚠️ 主单成功，但没有获得保护单ID");
                 }
 
-                // 最后再同步一次
                 await RefreshPositionsAsync(false);
             }
             catch (Exception ex)
@@ -619,11 +667,6 @@ namespace OrderWatchLite
             await RefreshPositionsAsync(true);
         }
 
-        /// <summary>
-        /// 从 Binance 获取真实持仓。
-        ///
-        /// 这是整个终端判断仓位的唯一真实来源。
-        /// </summary>
         private async Task RefreshPositionsAsync(
             bool showLog)
         {
@@ -637,27 +680,15 @@ namespace OrderWatchLite
 
                 _isRefreshing = true;
 
-                // ====================================================
-                // 获取 Binance 实际持仓
-                // ====================================================
-
                 var newPositions =
-                    await _binanceApi.GetPositionsAsync();
+                    await _binanceApi
+                        .GetPositionsAsync();
 
-                // 保存旧数据
                 var oldPositions =
                     _currentPositions.ToList();
 
-                // ====================================================
-                // 先更新UI数据
-                // ====================================================
-
                 _currentPositions =
                     newPositions;
-
-                // ====================================================
-                // 同步每个真实仓位到逻辑保护层
-                // ====================================================
 
                 foreach (var pos in newPositions)
                 {
@@ -668,13 +699,6 @@ namespace OrderWatchLite
                                 pos.Side,
                                 pos.Quantity);
 
-                    // =================================================
-                    // 实际仓位增加：
-                    // 说明可能是用户在 Binance 手动加仓。
-                    //
-                    // 这里识别新增数量。
-                    // =================================================
-
                     if (syncResult.AddedQuantity > 0 &&
                         syncResult.PreviousQuantity > 0)
                     {
@@ -684,10 +708,6 @@ namespace OrderWatchLite
                             syncResult.PreviousQuantity);
                     }
                 }
-
-                // ====================================================
-                // 旧持仓现在已经不存在
-                // ====================================================
 
                 foreach (var oldPos in oldPositions)
                 {
@@ -704,10 +724,11 @@ namespace OrderWatchLite
 
                     if (!stillExists)
                     {
-                        _positionManager.SyncWithActualPosition(
-                            oldPos.Symbol,
-                            oldPos.Side,
-                            0);
+                        _positionManager
+                            .SyncWithActualPosition(
+                                oldPos.Symbol,
+                                oldPos.Side,
+                                0);
                     }
                 }
 
@@ -748,19 +769,6 @@ namespace OrderWatchLite
             if (addedQuantity <= 0)
                 return;
 
-            // ========================================================
-            // 计算这次新增仓位的大致成交均价
-            //
-            // Binance 返回的是合并后的持仓均价。
-            //
-            // 新增成交价 ≈
-            //
-            // (新总仓位 × 新均价
-            //  - 旧总仓位 × 旧均价)
-            // / 新增数量
-            //
-            // ========================================================
-
             decimal previousEntryPrice =
                 GetPreviousEntryPrice(
                     actualPosition.Symbol,
@@ -793,18 +801,15 @@ namespace OrderWatchLite
                     addedQuantity;
 
                 if (estimatedPrice > 0)
-                    addedEntryPrice = estimatedPrice;
+                    addedEntryPrice =
+                        estimatedPrice;
             }
 
-            // ========================================================
-            // 如果这个增加已经是终端刚刚记录的层，
-            // 就不要重复创建。
-            // ========================================================
-
             decimal trackedQuantity =
-                _positionManager.GetTotalQuantity(
-                    actualPosition.Symbol,
-                    actualPosition.Side);
+                _positionManager
+                    .GetTotalQuantity(
+                        actualPosition.Symbol,
+                        actualPosition.Side);
 
             decimal difference =
                 actualPosition.Quantity -
@@ -813,38 +818,40 @@ namespace OrderWatchLite
             if (difference <= 0)
                 return;
 
-            // ========================================================
-            // 手动加仓没有新的保护单。
-            //
-            // 这里需要给这次手动加仓建立保护。
-            // ========================================================
-
             decimal stopPrice =
-                actualPosition.Side == OrderSide.Buy
+                actualPosition.Side ==
+                OrderSide.Buy
                     ? addedEntryPrice *
-                      (1m - _stopLossPercent / 100m)
+                      (1m -
+                       _stopLossPercent /
+                       100m)
                     : addedEntryPrice *
-                      (1m + _stopLossPercent / 100m);
+                      (1m +
+                       _stopLossPercent /
+                       100m);
 
             AddLog(
                 $"📈 检测到手动加仓: " +
                 $"{actualPosition.Symbol} " +
                 $"{difference}");
 
-            // ========================================================
-            // 这里调用 BinanceApiService 创建独立
-            // Reduce-Only STOP-MARKET。
-            // ========================================================
-
             var stopResult =
-                await _binanceApi.PlaceReduceOnlyStopMarketAsync(
-                    symbol: actualPosition.Symbol,
-                    side:
-                        actualPosition.Side == OrderSide.Buy
-                            ? OrderSide.Sell
-                            : OrderSide.Buy,
-                    quantity: difference,
-                    stopPrice: stopPrice);
+                await _binanceApi
+                    .PlaceReduceOnlyStopMarketAsync(
+                        symbol:
+                            actualPosition.Symbol,
+
+                        side:
+                            actualPosition.Side ==
+                            OrderSide.Buy
+                                ? OrderSide.Sell
+                                : OrderSide.Buy,
+
+                        quantity:
+                            difference,
+
+                        stopPrice:
+                            stopPrice);
 
             if (!stopResult.success)
             {
@@ -869,28 +876,50 @@ namespace OrderWatchLite
                 return;
             }
 
-            var layer = new Position
-            {
-                Symbol = actualPosition.Symbol,
-                Side = actualPosition.Side,
-                Quantity = difference,
-                EntryPrice = addedEntryPrice,
-                Leverage = actualPosition.Leverage,
-                StopLossPrice = stopPrice,
-                StopLossOrderId = stopOrderId,
-                IsBreakEvenTriggered = false,
-                BreakEvenThreshold =
-                    _breakEvenPercent,
-                StopLossPercent =
-                    _stopLossPercent,
-                OpenTime = DateTime.Now
-            };
+            var layer =
+                new Position
+                {
+                    Symbol =
+                        actualPosition.Symbol,
 
-            if (_positionManager.AddPosition(layer))
+                    Side =
+                        actualPosition.Side,
+
+                    Quantity =
+                        difference,
+
+                    EntryPrice =
+                        addedEntryPrice,
+
+                    Leverage =
+                        actualPosition.Leverage,
+
+                    StopLossPrice =
+                        stopPrice,
+
+                    StopLossOrderId =
+                        stopOrderId,
+
+                    IsBreakEvenTriggered =
+                        false,
+
+                    BreakEvenThreshold =
+                        _breakEvenPercent,
+
+                    StopLossPercent =
+                        _stopLossPercent,
+
+                    OpenTime =
+                        DateTime.Now
+                };
+
+            if (_positionManager
+                .AddPosition(layer))
             {
                 AddLog(
                     $"🛡️ 手动加仓已建立保护层: " +
-                    $"{difference} @ {addedEntryPrice:F2}");
+                    $"{difference} @ " +
+                    $"{addedEntryPrice:F2}");
             }
         }
 
@@ -904,7 +933,9 @@ namespace OrderWatchLite
         {
             var latest =
                 _positionManager
-                    .GetLatestPosition(symbol, side);
+                    .GetLatestPosition(
+                        symbol,
+                        side);
 
             if (latest != null &&
                 latest.EntryPrice > 0)
@@ -930,37 +961,52 @@ namespace OrderWatchLite
             if (_currentPrice <= 0)
                 return;
 
-            await _positionManager.CheckBreakEvenAsync(
-                _currentPrice,
-                _breakEvenPercent,
-                async (stopOrderId, breakEvenPrice) =>
-                {
-                    try
-                    {
-                        var result =
-                            await _binanceApi
-                                .ModifyStopLossAsync(
-                                    stopOrderId,
-                                    breakEvenPrice);
+            await _positionManager
+                .CheckBreakEvenAsync(
+                    _currentPrice,
+                    _breakEvenPercent,
 
-                        if (result.success)
+                    async (
+                        stopOrderId,
+                        breakEvenPrice) =>
+                    {
+                        try
+                        {
+                            var result =
+                                await _binanceApi
+                                    .ModifyStopLossAsync(
+                                        stopOrderId,
+                                        breakEvenPrice);
+
+                            if (result.success)
+                            {
+                                AddLog(
+                                    $"🔒 保护层 {stopOrderId} " +
+                                    $"已移动至保本价 " +
+                                    $"{breakEvenPrice:F2}，" +
+                                    $"新保护单: {result.newOrderId}");
+                            }
+                            else
+                            {
+                                AddLog(
+                                    $"❌ 保本修改失败: " +
+                                    $"{result.error}");
+                            }
+
+                            return result;
+                        }
+                        catch (Exception ex)
                         {
                             AddLog(
-                                $"🔒 保护层 {stopOrderId} " +
-                                $"已移动至保本价 " +
-                                $"{breakEvenPrice:F2}");
+                                $"❌ 保本修改异常: " +
+                                $"{ex.Message}");
+
+                            return (
+                                false,
+                                0L,
+                                ex.Message);
                         }
-
-                        return result.success;
-                    }
-                    catch (Exception ex)
-                    {
-                        AddLog(
-                            $"❌ 保本修改失败: {ex.Message}");
-
-                        return false;
-                    }
-                });
+                    });
         }
 
         // ============================================================
@@ -971,7 +1017,6 @@ namespace OrderWatchLite
             object sender,
             RoutedEventArgs e)
         {
-            // 点平仓以后，第一件事就是重新扫描
             await RefreshPositionsAsync(false);
 
             if (_selectedPosition == null)
@@ -982,7 +1027,6 @@ namespace OrderWatchLite
                 return;
             }
 
-            // 从最新真实数据重新寻找
             var actual =
                 _currentPositions.FirstOrDefault(
                     p =>
@@ -990,7 +1034,8 @@ namespace OrderWatchLite
                             _selectedPosition.Symbol,
                             StringComparison.OrdinalIgnoreCase)
                         &&
-                        p.Side == _selectedPosition.Side);
+                        p.Side ==
+                            _selectedPosition.Side);
 
             if (actual == null)
             {
@@ -1011,7 +1056,6 @@ namespace OrderWatchLite
             object sender,
             RoutedEventArgs e)
         {
-            // 先扫描
             await RefreshPositionsAsync(false);
 
             if (_currentPositions.Count == 0)
@@ -1029,7 +1073,8 @@ namespace OrderWatchLite
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
 
-            if (result != MessageBoxResult.Yes)
+            if (result !=
+                MessageBoxResult.Yes)
                 return;
 
             if (_binanceApi == null)
@@ -1044,12 +1089,14 @@ namespace OrderWatchLite
             foreach (var pos in toClose)
             {
                 var closeResult =
-                    await _binanceApi.ClosePositionAsync(
-                        pos.Symbol,
-                        pos.Quantity,
-                        pos.Side == OrderSide.Buy
-                            ? OrderSide.Sell
-                            : OrderSide.Buy);
+                    await _binanceApi
+                        .ClosePositionAsync(
+                            pos.Symbol,
+                            pos.Quantity,
+                            pos.Side ==
+                                OrderSide.Buy
+                                ? OrderSide.Sell
+                                : OrderSide.Buy);
 
                 if (closeResult.success)
                 {
@@ -1070,10 +1117,6 @@ namespace OrderWatchLite
                 }
             }
 
-            // ========================================================
-            // 平仓完成以后重新扫描
-            // ========================================================
-
             await RefreshPositionsAsync(false);
 
             AddLog(
@@ -1089,7 +1132,6 @@ namespace OrderWatchLite
             object sender,
             RoutedEventArgs e)
         {
-            // 先扫描
             await RefreshPositionsAsync(false);
 
             if (_currentPositions.Count == 0)
@@ -1121,7 +1163,8 @@ namespace OrderWatchLite
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
 
-            if (result != MessageBoxResult.Yes)
+            if (result !=
+                MessageBoxResult.Yes)
                 return;
 
             if (_binanceApi == null)
@@ -1161,12 +1204,14 @@ namespace OrderWatchLite
                 }
 
                 var closeResult =
-                    await _binanceApi.ClosePositionAsync(
-                        pos.Symbol,
-                        closeQty,
-                        pos.Side == OrderSide.Buy
-                            ? OrderSide.Sell
-                            : OrderSide.Buy);
+                    await _binanceApi
+                        .ClosePositionAsync(
+                            pos.Symbol,
+                            closeQty,
+                            pos.Side ==
+                                OrderSide.Buy
+                                ? OrderSide.Sell
+                                : OrderSide.Buy);
 
                 if (closeResult.success)
                 {
@@ -1187,10 +1232,6 @@ namespace OrderWatchLite
                         $"{closeResult.error}");
                 }
             }
-
-            // ========================================================
-            // 平仓完成以后，完全以 Binance 实际数量重新同步
-            // ========================================================
 
             await RefreshPositionsAsync(false);
 
@@ -1218,12 +1259,9 @@ namespace OrderWatchLite
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
 
-            if (confirm != MessageBoxResult.Yes)
+            if (confirm !=
+                MessageBoxResult.Yes)
                 return;
-
-            // ========================================================
-            // 真正执行平仓
-            // ========================================================
 
             OrderSide closeSide =
                 pos.Side == OrderSide.Buy
@@ -1231,10 +1269,11 @@ namespace OrderWatchLite
                     : OrderSide.Buy;
 
             var closeResult =
-                await _binanceApi.ClosePositionAsync(
-                    pos.Symbol,
-                    pos.Quantity,
-                    closeSide);
+                await _binanceApi
+                    .ClosePositionAsync(
+                        pos.Symbol,
+                        pos.Quantity,
+                        closeSide);
 
             if (!closeResult.success)
             {
@@ -1249,14 +1288,6 @@ namespace OrderWatchLite
                 $"✅ 平仓成功! " +
                 $"{pos.Symbol} " +
                 $"订单: {closeResult.orderId}");
-
-            // ========================================================
-            // 关键：
-            // 平仓成功以后重新扫 Binance。
-            //
-            // PositionManager 根据实际减少数量，
-            // 自动从最新层开始扣。
-            // ========================================================
 
             await RefreshPositionsAsync(false);
         }
@@ -1274,9 +1305,11 @@ namespace OrderWatchLite
 
             decimal steps =
                 Math.Floor(
-                    quantity / stepSize);
+                    quantity /
+                    stepSize);
 
-            return steps * stepSize;
+            return steps *
+                   stepSize;
         }
 
         // ============================================================
@@ -1286,7 +1319,8 @@ namespace OrderWatchLite
         private void UpdateMonitorCount()
         {
             StatusBarMonitorCount.Text =
-                $"监控: {_positionManager.GetAllPositions().Count} 层";
+                $"监控: " +
+                $"{_positionManager.GetAllPositions().Count} 层";
         }
 
         // ============================================================
@@ -1324,9 +1358,11 @@ namespace OrderWatchLite
                                 _selectedPosition.Symbol,
                                 StringComparison.OrdinalIgnoreCase)
                             &&
-                            p.Side == _selectedPosition.Side);
+                            p.Side ==
+                                _selectedPosition.Side);
 
-                _selectedPosition = selected;
+                _selectedPosition =
+                    selected;
             }
         }
 
@@ -1343,18 +1379,22 @@ namespace OrderWatchLite
         // 日志
         // ============================================================
 
-        private void AddLog(string message)
+        private void AddLog(
+            string message)
         {
             string time =
-                DateTime.Now.ToString("HH:mm:ss");
+                DateTime.Now.ToString(
+                    "HH:mm:ss");
 
             _logEntries.Insert(
                 0,
                 $"[{time}] {message}");
 
             if (_logEntries.Count > 100)
+            {
                 _logEntries.RemoveAt(
                     _logEntries.Count - 1);
+            }
 
             if (LogListBox.Items.Count > 0)
             {

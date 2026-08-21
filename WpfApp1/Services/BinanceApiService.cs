@@ -30,10 +30,6 @@ namespace OrderWatchLite.Services
         // 保护单本地映射
         //
         // OrderId -> 保护单信息
-        //
-        // 用于 ModifyStopLossAsync：
-        // MainWindow 只传 StopLossOrderId + 新止损价，
-        // 这里负责找到原保护单对应的品种、方向、数量。
         // ============================================================
 
         private readonly Dictionary<long, StopOrderInfo> _stopOrders = new();
@@ -279,12 +275,12 @@ namespace OrderWatchLite.Services
         }
 
         // ============================================================
-        // 新增：
-        // PlaceReduceOnlyStopMarketAsync
+        // 创建独立 Reduce-Only STOP-MARKET
         //
-        // 给 PositionManager / MainWindow 使用。
+        // side 表示当前持仓方向：
         //
-        // 每一个逻辑层都可以拥有自己的 STOP-MARKET。
+        // BUY  = 多仓
+        // SELL = 空仓
         // ============================================================
 
         public async Task<(
@@ -293,7 +289,7 @@ namespace OrderWatchLite.Services
             string error)>
             PlaceReduceOnlyStopMarketAsync(
                 string symbol,
-                OrderSide positionSide,
+                OrderSide side,
                 decimal quantity,
                 decimal stopPrice)
         {
@@ -325,7 +321,7 @@ namespace OrderWatchLite.Services
 
                 return await PlaceReduceOnlyStopMarketInternalAsync(
                     symbol,
-                    positionSide,
+                    side,
                     quantity,
                     stopPrice);
             }
@@ -348,13 +344,13 @@ namespace OrderWatchLite.Services
             string error)>
             PlaceReduceOnlyStopMarketInternalAsync(
                 string symbol,
-                OrderSide positionSide,
+                OrderSide side,
                 decimal quantity,
                 decimal stopPrice)
         {
             try
             {
-                // 持仓方向：
+                // 当前持仓方向：
                 //
                 // BUY  = 多仓
                 // SELL = 空仓
@@ -363,7 +359,7 @@ namespace OrderWatchLite.Services
                 // 平空 -> BUY
 
                 OrderSide closeSide =
-                    positionSide == OrderSide.Buy
+                    side == OrderSide.Buy
                         ? OrderSide.Sell
                         : OrderSide.Buy;
 
@@ -400,7 +396,7 @@ namespace OrderWatchLite.Services
                     {
                         OrderId = orderId,
                         Symbol = symbol,
-                        PositionSide = positionSide,
+                        PositionSide = side,
                         Quantity = quantity,
                         StopPrice = stopPrice
                     };
@@ -423,32 +419,46 @@ namespace OrderWatchLite.Services
         // ============================================================
         // 修改保护单
         //
-        // 注意：
-        // 这里不是直接修改 STOP-MARKET。
-        //
-        // 逻辑：
+        // Binance 没有直接修改原 STOP-MARKET 的逻辑：
         //
         // 原保护单
         //      ↓
         // 撤销
         //      ↓
-        // 新保护单
+        // 创建新的保护单
         //
-        // 所以保本后仍然是一个
-        // Reduce-Only STOP-MARKET。
+        // 返回：
+        //
+        // success    是否成功
+        // newOrderId 新保护单 ID
+        // error      错误信息
         // ============================================================
 
-        public async Task<bool> ModifyStopLossAsync(
-            long stopLossOrderId,
-            decimal newStopPrice)
+        public async Task<(
+            bool success,
+            long newOrderId,
+            string error)>
+            ModifyStopLossAsync(
+                long stopLossOrderId,
+                decimal newStopPrice)
         {
             try
             {
                 if (stopLossOrderId <= 0)
-                    return false;
+                {
+                    return (
+                        false,
+                        0,
+                        "原保护单ID无效");
+                }
 
                 if (newStopPrice <= 0)
-                    return false;
+                {
+                    return (
+                        false,
+                        0,
+                        "新的止损价格必须大于 0");
+                }
 
                 StopOrderInfo? oldOrder = null;
 
@@ -459,12 +469,15 @@ namespace OrderWatchLite.Services
                         out oldOrder);
                 }
 
-                // 如果程序内缓存没有找到，
-                // 暂时无法安全重建保护单。
-                //
+                // 如果程序内部没有找到原保护单，
                 // 不猜 symbol / direction / quantity。
                 if (oldOrder == null)
-                    return false;
+                {
+                    return (
+                        false,
+                        0,
+                        $"找不到保护单 {stopLossOrderId} 的本地记录");
+                }
 
                 // ====================================================
                 // 1. 撤销旧保护单
@@ -477,7 +490,13 @@ namespace OrderWatchLite.Services
                             orderId: stopLossOrderId);
 
                 if (!cancelResult.Success)
-                    return false;
+                {
+                    return (
+                        false,
+                        0,
+                        cancelResult.Error?.Message ??
+                        "撤销旧保护单失败");
+                }
 
                 // ====================================================
                 // 2. 创建新的 Reduce-Only STOP-MARKET
@@ -491,10 +510,31 @@ namespace OrderWatchLite.Services
                         newStopPrice);
 
                 if (!newOrder.success)
-                    return false;
+                {
+                    return (
+                        false,
+                        0,
+                        $"新保护单创建失败: {newOrder.error}");
+                }
+
+                long newOrderId = 0;
+
+                if (!long.TryParse(
+                    newOrder.orderId,
+                    out newOrderId)
+                    ||
+                    newOrderId <= 0)
+                {
+                    return (
+                        false,
+                        0,
+                        "新保护单创建成功，但订单ID无效");
+                }
 
                 // ====================================================
-                // 3. 删除旧映射
+                // 3. 删除旧保护单映射
+                //
+                // 新保护单已经在内部方法中登记。
                 // ====================================================
 
                 lock (_stopOrderLock)
@@ -502,11 +542,17 @@ namespace OrderWatchLite.Services
                     _stopOrders.Remove(stopLossOrderId);
                 }
 
-                return true;
+                return (
+                    true,
+                    newOrderId,
+                    string.Empty);
             }
-            catch
+            catch (Exception ex)
             {
-                return false;
+                return (
+                    false,
+                    0,
+                    ex.Message);
             }
         }
 

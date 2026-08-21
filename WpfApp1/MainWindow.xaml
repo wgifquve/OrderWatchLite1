@@ -1,9 +1,12 @@
 ﻿<Window x:Class="OrderWatchLite.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="OrderWatchLite" Height="520" Width="1100"
-        WindowStartupLocation="CenterScreen">
+        Title="OrderWatchLite" Height="650" Width="1100"
+        WindowStartupLocation="CenterScreen"
+        Foreground="Black">
+
     <Grid Margin="5">
+
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -11,41 +14,110 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="90"/>
+            <RowDefinition Height="135"/>
             <RowDefinition Height="25"/>
         </Grid.RowDefinitions>
 
-        <!-- 行0：品种+滑杆 -->
-        <Grid Grid.Row="0" Margin="0,2">
+        <!-- 行0：品种 + 仓位 + 杠杆 + 总额 -->
+        <Grid Grid.Row="0" Margin="0,3">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="180"/>
+                <ColumnDefinition Width="210"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="170"/>
             </Grid.ColumnDefinitions>
-            <ComboBox x:Name="CmbSymbol" Grid.Column="0" IsEditable="True" Text="BTCUSDT" Margin="2"
+
+            <ComboBox x:Name="CmbSymbol"
+                      Grid.Column="0"
+                      IsEditable="True"
+                      Text="BTCUSDT"
+                      Height="36"
+                      FontSize="16"
+                      Margin="2"
                       DropDownOpened="CmbSymbol_DropDownOpened"
                       SelectionChanged="CmbSymbol_SelectionChanged"/>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="5,0">
-                <Label Content="仓位比" VerticalAlignment="Center"/>
-                <Slider x:Name="SliderPosition" Minimum="0" Maximum="100" TickFrequency="5"
-                        Value="10" Width="120" IsSnapToTickEnabled="True"/>
-                <Label x:Name="LblPositionPercent" Content="10%" Width="40"/>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        Margin="8,0"
+                        VerticalAlignment="Center">
+
+                <Label Content="仓位比"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       Foreground="Black"/>
+
+                <Slider x:Name="SliderPosition"
+                        Minimum="0"
+                        Maximum="100"
+                        TickFrequency="5"
+                        Value="10"
+                        Width="150"
+                        Height="30"
+                        IsSnapToTickEnabled="True"
+                        VerticalAlignment="Center"/>
+
+                <Label x:Name="LblPositionPercent"
+                       Content="10%"
+                       Width="50"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       FontWeight="Bold"
+                       Foreground="Black"/>
             </StackPanel>
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="5,0">
-                <Label Content="杠杆" VerticalAlignment="Center"/>
-                <Slider x:Name="SliderLeverage" Minimum="5" Maximum="100" TickFrequency="5"
-                        Value="20" Width="120" IsSnapToTickEnabled="True"/>
-                <Label x:Name="LblLeverage" Content="20X" Width="40"/>
+
+            <StackPanel Grid.Column="2"
+                        Orientation="Horizontal"
+                        Margin="8,0"
+                        VerticalAlignment="Center">
+
+                <Label Content="杠杆"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       Foreground="Black"/>
+
+                <Slider x:Name="SliderLeverage"
+                        Minimum="5"
+                        Maximum="100"
+                        TickFrequency="5"
+                        Value="20"
+                        Width="150"
+                        Height="30"
+                        IsSnapToTickEnabled="True"
+                        VerticalAlignment="Center"/>
+
+                <Label x:Name="LblLeverage"
+                       Content="20X"
+                       Width="55"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       FontWeight="Bold"
+                       Foreground="Black"/>
             </StackPanel>
-            <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="5,0">
-                <Label Content="总额:" VerticalAlignment="Center"/>
-                <Label x:Name="LblTotalValue" Content="0 U" VerticalAlignment="Center" FontWeight="Bold"/>
+
+            <StackPanel Grid.Column="3"
+                        Orientation="Horizontal"
+                        Margin="5,0"
+                        VerticalAlignment="Center">
+
+                <Label Content="总额:"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       Foreground="Black"/>
+
+                <Label x:Name="LblTotalValue"
+                       Content="0 U"
+                       VerticalAlignment="Center"
+                       FontSize="16"
+                       FontWeight="Bold"
+                       Foreground="Black"/>
             </StackPanel>
         </Grid>
 
-        <!-- 行1：快速比例+保本 -->
-        <Grid Grid.Row="1" Margin="0,2">
+
+        <!-- 行1：快速比例 + 保本 -->
+        <Grid Grid.Row="1" Margin="0,3">
+
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
@@ -54,46 +126,160 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <ToggleButton x:Name="BtnQuick70" Grid.Column="0" Content="70%" Width="45" Margin="2"
-                          Checked="QuickRatio_Checked" Unchecked="QuickRatio_Unchecked"/>
-            <ToggleButton x:Name="BtnQuick50" Grid.Column="1" Content="50%" Width="45" Margin="2"
-                          Checked="QuickRatio_Checked" Unchecked="QuickRatio_Unchecked"/>
-            <ToggleButton x:Name="BtnQuick30" Grid.Column="2" Content="30%" Width="45" Margin="2"
-                          Checked="QuickRatio_Checked" Unchecked="QuickRatio_Unchecked"/>
-            <ToggleButton x:Name="BtnQuick15" Grid.Column="3" Content="15%" Width="45" Margin="2"
-                          Checked="QuickRatio_Checked" Unchecked="QuickRatio_Unchecked"/>
-            <StackPanel Grid.Column="4" Orientation="Horizontal" Margin="20,0,0,0">
-                <ToggleButton x:Name="BtnBreakEven" Content="保本开启" Width="80"
-                              Checked="BtnBreakEven_Checked" Unchecked="BtnBreakEven_Unchecked"/>
-                <Label Content="NL%" VerticalAlignment="Center" Margin="5,0,0,0"/>
-                <TextBox x:Name="TxtBreakEvenPercent" Text="3" Width="40" TextAlignment="Center"/>
-                <Label x:Name="LblBreakEvenStatus" Content="● 未触发" Foreground="Gray" Margin="5,0"/>
+
+            <ToggleButton x:Name="BtnQuick70"
+                          Grid.Column="0"
+                          Content="70%"
+                          Width="72"
+                          Height="38"
+                          FontSize="16"
+                          FontWeight="Bold"
+                          Foreground="Black"
+                          Margin="2"
+                          Checked="QuickRatio_Checked"
+                          Unchecked="QuickRatio_Unchecked"/>
+
+            <ToggleButton x:Name="BtnQuick50"
+                          Grid.Column="1"
+                          Content="50%"
+                          Width="72"
+                          Height="38"
+                          FontSize="16"
+                          FontWeight="Bold"
+                          Foreground="Black"
+                          Margin="2"
+                          Checked="QuickRatio_Checked"
+                          Unchecked="QuickRatio_Unchecked"/>
+
+            <ToggleButton x:Name="BtnQuick30"
+                          Grid.Column="2"
+                          Content="30%"
+                          Width="72"
+                          Height="38"
+                          FontSize="16"
+                          FontWeight="Bold"
+                          Foreground="Black"
+                          Margin="2"
+                          Checked="QuickRatio_Checked"
+                          Unchecked="QuickRatio_Unchecked"/>
+
+            <ToggleButton x:Name="BtnQuick15"
+                          Grid.Column="3"
+                          Content="15%"
+                          Width="72"
+                          Height="38"
+                          FontSize="16"
+                          FontWeight="Bold"
+                          Foreground="Black"
+                          Margin="2"
+                          Checked="QuickRatio_Checked"
+                          Unchecked="QuickRatio_Unchecked"/>
+
+            <StackPanel Grid.Column="4"
+                        Orientation="Horizontal"
+                        Margin="25,0,0,0"
+                        VerticalAlignment="Center">
+
+                <ToggleButton x:Name="BtnBreakEven"
+                              Content="保本开启"
+                              Width="128"
+                              Height="38"
+                              FontSize="16"
+                              FontWeight="Bold"
+                              Foreground="Black"
+                              Checked="BtnBreakEven_Checked"
+                              Unchecked="BtnBreakEven_Unchecked"/>
+
+                <Label Content="NL%"
+                       VerticalAlignment="Center"
+                       Margin="8,0,0,0"
+                       FontSize="15"
+                       Foreground="Black"/>
+
+                <TextBox x:Name="TxtBreakEvenPercent"
+                         Text="3"
+                         Width="60"
+                         Height="34"
+                         FontSize="16"
+                         TextAlignment="Center"
+                         VerticalContentAlignment="Center"
+                         Foreground="Black"/>
+
+                <Label x:Name="LblBreakEvenStatus"
+                       Content="● 未触发"
+                       Foreground="Black"
+                       Margin="8,0"
+                       FontSize="15"
+                       VerticalAlignment="Center"/>
             </StackPanel>
         </Grid>
 
-        <!-- 行2：保证金+价值+价格 -->
-        <Grid Grid.Row="2" Margin="0,2">
+
+        <!-- 行2：保证金 + 价值 + 当前价格 -->
+        <Grid Grid.Row="2" Margin="0,3">
+
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="5,0">
-                <Label Content="实际保证金:" VerticalAlignment="Center"/>
-                <Label x:Name="LblActualMargin" Content="0 U" VerticalAlignment="Center" Foreground="Yellow"/>
+
+            <StackPanel Grid.Column="0"
+                        Orientation="Horizontal"
+                        Margin="8,0">
+
+                <Label Content="实际保证金:"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       Foreground="Black"/>
+
+                <Label x:Name="LblActualMargin"
+                       Content="0 U"
+                       VerticalAlignment="Center"
+                       FontSize="16"
+                       FontWeight="Bold"
+                       Foreground="Black"/>
             </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="5,0">
-                <Label Content="仓位价值:" VerticalAlignment="Center"/>
-                <Label x:Name="LblPositionValue" Content="0 U" VerticalAlignment="Center" Foreground="Yellow"/>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        Margin="8,0">
+
+                <Label Content="仓位价值:"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       Foreground="Black"/>
+
+                <Label x:Name="LblPositionValue"
+                       Content="0 U"
+                       VerticalAlignment="Center"
+                       FontSize="16"
+                       FontWeight="Bold"
+                       Foreground="Black"/>
             </StackPanel>
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="5,0">
-                <Label Content="当前价:" VerticalAlignment="Center"/>
-                <Label x:Name="LblCurrentPrice" Content="0.00" VerticalAlignment="Center" FontWeight="Bold"/>
+
+            <StackPanel Grid.Column="2"
+                        Orientation="Horizontal"
+                        Margin="8,0">
+
+                <Label Content="当前价:"
+                       VerticalAlignment="Center"
+                       FontSize="15"
+                       Foreground="Black"/>
+
+                <Label x:Name="LblCurrentPrice"
+                       Content="0.00"
+                       VerticalAlignment="Center"
+                       FontSize="17"
+                       FontWeight="Bold"
+                       Foreground="Black"/>
             </StackPanel>
         </Grid>
 
-        <!-- 行3：BUY/SELL + 止损% -->
-        <Grid Grid.Row="3" Margin="0,2">
+
+        <!-- 行3：BUY / SELL + 止损 -->
+        <Grid Grid.Row="3" Margin="0,4">
+
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
@@ -102,29 +288,109 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <Button x:Name="BtnBuy" Grid.Column="0" Content="BUY" Width="80" Height="30" Background="LightGreen" Click="BtnBuy_Click" Margin="2"/>
-            <Button x:Name="BtnSell" Grid.Column="1" Content="SELL" Width="80" Height="30" Background="LightCoral" Click="BtnSell_Click" Margin="2"/>
-            <Label Grid.Column="2" Content="止损%" VerticalAlignment="Center" Margin="10,0,0,0"/>
-            <TextBox x:Name="TxtStopLossPercent" Grid.Column="3" Text="5" Width="40" TextAlignment="Center" Margin="2,0"/>
-            <Button x:Name="BtnRefreshOrders" Grid.Column="5" Content="刷新场内订单" Width="100" Height="30" Click="BtnRefreshOrders_Click" Margin="5,0"/>
+
+            <Button x:Name="BtnBuy"
+                    Grid.Column="0"
+                    Content="BUY"
+                    Width="128"
+                    Height="48"
+                    FontSize="20"
+                    FontWeight="Bold"
+                    Foreground="Black"
+                    Background="LightGreen"
+                    Click="BtnBuy_Click"
+                    Margin="2"/>
+
+            <Button x:Name="BtnSell"
+                    Grid.Column="1"
+                    Content="SELL"
+                    Width="128"
+                    Height="48"
+                    FontSize="20"
+                    FontWeight="Bold"
+                    Foreground="Black"
+                    Background="LightCoral"
+                    Click="BtnSell_Click"
+                    Margin="2"/>
+
+            <Label Grid.Column="2"
+                   Content="止损%"
+                   VerticalAlignment="Center"
+                   Margin="15,0,0,0"
+                   FontSize="16"
+                   FontWeight="Bold"
+                   Foreground="Black"/>
+
+            <TextBox x:Name="TxtStopLossPercent"
+                     Grid.Column="3"
+                     Text="5"
+                     Width="60"
+                     Height="38"
+                     FontSize="17"
+                     FontWeight="Bold"
+                     TextAlignment="Center"
+                     VerticalContentAlignment="Center"
+                     Foreground="Black"
+                     Margin="4,0"/>
+
+            <Button x:Name="BtnRefreshOrders"
+                    Grid.Column="5"
+                    Content="刷新场内订单"
+                    Width="160"
+                    Height="48"
+                    FontSize="17"
+                    FontWeight="Bold"
+                    Foreground="Black"
+                    Click="BtnRefreshOrders_Click"
+                    Margin="5,0"/>
         </Grid>
+
 
         <!-- 行4：持仓列表 + 平仓按钮 -->
+        <!-- 平仓按钮保持上一版尺寸，不动 -->
         <Grid Grid.Row="4" Margin="0,2">
+
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <ListBox x:Name="PositionListBox" Grid.Column="0" Height="50" Margin="2"
-                     DisplayMemberPath="DisplayText" SelectionChanged="PositionListBox_SelectionChanged"/>
-            <StackPanel Grid.Column="1" Orientation="Vertical" Margin="5,0">
-                <Button x:Name="BtnCloseSelected" Content="平仓选中" Width="80" Height="22" Click="BtnCloseSelected_Click" Margin="0,1"/>
-                <Button x:Name="BtnCloseAll" Content="一键全部平仓" Width="80" Height="22" Click="BtnCloseAll_Click" Margin="0,1" Background="Orange"/>
+
+            <ListBox x:Name="PositionListBox"
+                     Grid.Column="0"
+                     Height="150"
+                     Margin="2"
+                     FontSize="15"
+                     Foreground="Black"
+                     DisplayMemberPath="DisplayText"
+                     SelectionChanged="PositionListBox_SelectionChanged"/>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Vertical"
+                        Margin="5,0">
+
+                <Button x:Name="BtnCloseSelected"
+                        Content="平仓选中"
+                        Width="80"
+                        Height="44"
+                        Click="BtnCloseSelected_Click"
+                        Margin="0,1"
+                        Foreground="Black"/>
+
+                <Button x:Name="BtnCloseAll"
+                        Content="一键全部平仓"
+                        Width="80"
+                        Height="44"
+                        Click="BtnCloseAll_Click"
+                        Margin="0,1"
+                        Background="Orange"
+                        Foreground="Black"/>
             </StackPanel>
         </Grid>
 
+
         <!-- 行5：百分比平仓 -->
-        <Grid Grid.Row="5" Margin="0,2">
+        <Grid Grid.Row="5" Margin="0,3">
+
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
@@ -133,26 +399,82 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <Label Grid.Column="0" Content="百分比平仓:" VerticalAlignment="Center" FontWeight="Bold"/>
-            <TextBox x:Name="TxtClosePercent" Grid.Column="1" Text="50" Width="40" TextAlignment="Center" Margin="5,0"/>
-            <Label Grid.Column="2" Content="%" VerticalAlignment="Center"/>
-            <Button x:Name="BtnClosePercent" Grid.Column="3" Content="执行百分比平仓" Width="100" Height="25" Click="BtnClosePercent_Click" Background="LightBlue" Margin="5,0"/>
-            <Label Grid.Column="5" Content="(平仓当前持仓的指定百分比)" VerticalAlignment="Center" Foreground="Gray" FontSize="11"/>
+
+            <Label Grid.Column="0"
+                   Content="百分比平仓:"
+                   VerticalAlignment="Center"
+                   FontWeight="Bold"
+                   FontSize="16"
+                   Foreground="Black"/>
+
+            <TextBox x:Name="TxtClosePercent"
+                     Grid.Column="1"
+                     Text="50"
+                     Width="60"
+                     Height="36"
+                     FontSize="16"
+                     TextAlignment="Center"
+                     VerticalContentAlignment="Center"
+                     Foreground="Black"
+                     Margin="7,0"/>
+
+            <Label Grid.Column="2"
+                   Content="%"
+                   VerticalAlignment="Center"
+                   FontSize="16"
+                   Foreground="Black"/>
+
+            <Button x:Name="BtnClosePercent"
+                    Grid.Column="3"
+                    Content="执行百分比平仓"
+                    Width="160"
+                    Height="42"
+                    FontSize="16"
+                    FontWeight="Bold"
+                    Foreground="Black"
+                    Click="BtnClosePercent_Click"
+                    Background="LightBlue"
+                    Margin="7,0"/>
+
+            <Label Grid.Column="5"
+                   Content="(平仓当前持仓的指定百分比)"
+                   VerticalAlignment="Center"
+                   Foreground="Black"
+                   FontSize="12"/>
         </Grid>
 
+
         <!-- 行6：日志 -->
-        <ListBox x:Name="LogListBox" Grid.Row="6" Height="90" Margin="2"
-                 ItemsSource="{Binding}" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+        <ListBox x:Name="LogListBox"
+                 Grid.Row="6"
+                 Height="135"
+                 Margin="2"
+                 FontSize="13"
+                 Foreground="Black"
+                 ItemsSource="{Binding}"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+
 
         <!-- 行7：状态栏 -->
-        <StatusBar Grid.Row="7" Margin="0,2">
+        <StatusBar Grid.Row="7"
+                   Margin="0,2"
+                   Foreground="Black">
+
             <StatusBarItem>
-                <TextBlock x:Name="StatusBarConnection" Text="● 未连接" Foreground="Red"/>
+                <TextBlock x:Name="StatusBarConnection"
+                           Text="● 未连接"
+                           Foreground="Black"/>
             </StatusBarItem>
+
             <Separator/>
+
             <StatusBarItem>
-                <TextBlock x:Name="StatusBarMonitorCount" Text="监控: 0 单"/>
+                <TextBlock x:Name="StatusBarMonitorCount"
+                           Text="监控: 0 单"
+                           Foreground="Black"/>
             </StatusBarItem>
+
         </StatusBar>
+
     </Grid>
 </Window>
