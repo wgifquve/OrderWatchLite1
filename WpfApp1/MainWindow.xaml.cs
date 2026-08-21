@@ -13,6 +13,7 @@ namespace OrderWatchLite
 {
     public partial class MainWindow : Window
     {
+        // 注意：API Key 不应写死在代码中，请使用 appsettings.json 或环境变量
         private readonly bool _useTestNet = true;
         private readonly string _apiKey = "VStIg7OOM6pDjHUFQwI7SidpGZln1ChXgWlxW5BkAFmk7IgtpoCGzDqmHjdFcyJ2";
         private readonly string _apiSecret = "GN8PWHltiyHAjuCNSV5UgmNT3YN4HkDB7nNWHqA6QB1MeysN1fA3YUN07MjeKmdR";
@@ -24,7 +25,9 @@ namespace OrderWatchLite
         private string _selectedSymbol = "BTCUSDT";
         private decimal _selectedQuickRatio = 1m;
         private decimal _breakEvenPercent = 3m;
+#pragma warning disable CS0414 // 字段被赋值但从未使用
         private bool _isBreakEvenEnabled = false;
+#pragma warning restore CS0414
         private decimal _stopLossPercent = 5m;
 
         private List<PositionInfo> _currentPositions = new List<PositionInfo>();
@@ -158,7 +161,7 @@ namespace OrderWatchLite
                         tb.IsChecked = false;
                 }
             }
-            string content = btn.Content.ToString().TrimEnd('%');
+            string content = btn.Content?.ToString()?.TrimEnd('%') ?? string.Empty;
             if (decimal.TryParse(content, out decimal val))
             {
                 _selectedQuickRatio = val / 100m;
@@ -225,10 +228,11 @@ namespace OrderWatchLite
                 if (positionValue <= 0) { AddLog("⚠️ 仓位价值为0"); return; }
                 if (_currentPrice <= 0) { AddLog("⚠️ 当前价格无效"); return; }
 
-                decimal rawQuantity = positionValue / _currentPrice;
+                // 从缓存获取步长信息
                 var stepInfo = await _binanceApi.GetLotSizeInfoAsync(_selectedSymbol);
                 if (stepInfo == null) { AddLog("❌ 无法获取步长信息"); return; }
 
+                decimal rawQuantity = positionValue / _currentPrice;
                 decimal qty = RoundToLotSize(rawQuantity, stepInfo.StepSize);
                 if (qty <= 0) { AddLog("⚠️ 数量过小为0"); return; }
 

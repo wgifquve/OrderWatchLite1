@@ -140,7 +140,7 @@
             <Label Grid.Column="5" Content="(平仓当前持仓的指定百分比)" VerticalAlignment="Center" Foreground="Gray" FontSize="11"/>
         </Grid>
 
-        <!-- 行6：日志（高度90） -->
+        <!-- 行6：日志 -->
         <ListBox x:Name="LogListBox" Grid.Row="6" Height="90" Margin="2"
                  ItemsSource="{Binding}" ScrollViewer.VerticalScrollBarVisibility="Auto"/>
 
