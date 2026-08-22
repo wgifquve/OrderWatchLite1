@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -818,6 +818,26 @@ namespace OrderWatchLite
             if (difference <= 0)
                 return;
 
+            // 加仓数量必须再次按照 Binance 当前交易对的数量步长处理。
+            // Binance 返回的实际持仓数量与本地逻辑层相减后，可能产生多余小数位。
+            var stepInfo =
+                await _binanceApi.GetLotSizeInfoAsync(
+                    actualPosition.Symbol);
+
+            if (stepInfo != null)
+            {
+                difference = RoundToLotSize(
+                    difference,
+                    stepInfo.StepSize);
+            }
+
+            if (difference <= 0)
+            {
+                AddLog(
+                    "⚠️ 检测到加仓，但按 Binance 数量精度处理后数量过小");
+                return;
+            }
+
             decimal stopPrice =
                 actualPosition.Side ==
                 OrderSide.Buy
@@ -835,6 +855,9 @@ namespace OrderWatchLite
                 $"{actualPosition.Symbol} " +
                 $"{difference}");
 
+            // ============================================================
+            // 【修改点】side 参数直接传 actualPosition.Side，不再反转
+            // ============================================================
             var stopResult =
                 await _binanceApi
                     .PlaceReduceOnlyStopMarketAsync(
@@ -842,10 +865,7 @@ namespace OrderWatchLite
                             actualPosition.Symbol,
 
                         side:
-                            actualPosition.Side ==
-                            OrderSide.Buy
-                                ? OrderSide.Sell
-                                : OrderSide.Buy,
+                            actualPosition.Side,    // <--- 已修改
 
                         quantity:
                             difference,
@@ -1010,16 +1030,17 @@ namespace OrderWatchLite
         }
 
         // ============================================================
-        // 平仓选中
+        // 平仓选中  【已修改】
         // ============================================================
 
         private async void BtnCloseSelected_Click(
             object sender,
             RoutedEventArgs e)
         {
-            await RefreshPositionsAsync(false);
+            var selected =
+                PositionListBox.SelectedItem as PositionInfo;
 
-            if (_selectedPosition == null)
+            if (selected == null)
             {
                 AddLog(
                     "⚠️ 请先选择要平仓的仓位");
@@ -1027,15 +1048,16 @@ namespace OrderWatchLite
                 return;
             }
 
+            await RefreshPositionsAsync(false);
+
             var actual =
                 _currentPositions.FirstOrDefault(
                     p =>
                         p.Symbol.Equals(
-                            _selectedPosition.Symbol,
+                            selected.Symbol,
                             StringComparison.OrdinalIgnoreCase)
                         &&
-                        p.Side ==
-                            _selectedPosition.Side);
+                        p.Side == selected.Side);
 
             if (actual == null)
             {

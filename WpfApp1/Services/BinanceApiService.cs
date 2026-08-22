@@ -1,4 +1,4 @@
-﻿using Binance.Net;
+using Binance.Net;
 using Binance.Net.Clients;
 using Binance.Net.Enums;
 using CryptoExchange.Net.Authentication;
@@ -7,6 +7,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace OrderWatchLite.Services
 {
@@ -17,6 +21,9 @@ namespace OrderWatchLite.Services
     {
         private readonly BinanceRestClient _restClient;
         private readonly bool _useTestNet;
+        private readonly string _apiKey;
+        private readonly string _apiSecret;
+        private readonly HttpClient _httpClient = new HttpClient();
 
         // ============================================================
         // ExchangeInfo 缓存
@@ -25,6 +32,8 @@ namespace OrderWatchLite.Services
         private ExchangeInfoCache? _exchangeInfoCache;
         private readonly SemaphoreSlim _exchangeInfoLock = new(1, 1);
         private readonly TimeSpan _cacheExpiry = TimeSpan.FromMinutes(5);
+        private readonly Dictionary<string, decimal> _priceTickCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _priceTickLock = new();
 
         // ============================================================
         // 保护单本地映射
@@ -45,6 +54,8 @@ namespace OrderWatchLite.Services
             bool useTestNet = true)
         {
             _useTestNet = useTestNet;
+            _apiKey = apiKey;
+            _apiSecret = apiSecret;
 
             _restClient = new BinanceRestClient(options =>
             {
@@ -343,76 +354,69 @@ namespace OrderWatchLite.Services
             string orderId,
             string error)>
             PlaceReduceOnlyStopMarketInternalAsync(
-                string symbol,
-                OrderSide side,
-                decimal quantity,
-                decimal stopPrice)
+                string symbol, OrderSide side, decimal quantity, decimal stopPrice)
         {
             try
             {
-                // 当前持仓方向：
-                //
-                // BUY  = 多仓
-                // SELL = 空仓
-                //
-                // 平多 -> SELL
-                // 平空 -> BUY
+                // Binance Futures 已将 STOP_MARKET 条件单迁移到 Algo Order 接口。
+                // 这里必须同时按照 Binance 的数量步长和价格 TickSize 规范化。
+                // 尤其是“加仓保护单”：加仓成交价经过加权反推后，往往会产生很多小数位，
+                // 如果直接把这个价格交给 Binance，就会出现 -1111 Precision is over the maximum defined for this asset。
+                decimal normalizedQuantity = await NormalizeQuantityAsync(symbol, quantity);
+                if (normalizedQuantity <= 0)
+                    return (false, string.Empty, "保护单数量经过交易所步长处理后为 0");
 
-                OrderSide closeSide =
-                    side == OrderSide.Buy
-                        ? OrderSide.Sell
-                        : OrderSide.Buy;
+                decimal normalizedStopPrice = await NormalizePriceAsync(symbol, stopPrice, side);
+                if (normalizedStopPrice <= 0)
+                    return (false, string.Empty, "保护单价格经过交易所价格精度处理后无效");
 
-                var result =
-                    await _restClient.UsdFuturesApi.Trading
-                        .PlaceOrderAsync(
-                            symbol: symbol,
-                            side: closeSide,
-                            type: FuturesOrderType.StopMarket,
-                            quantity: quantity,
-                            stopPrice: stopPrice,
-                            timeInForce: TimeInForce.GoodTillCanceled,
-                            newClientOrderId:
-                                $"SL_{Guid.NewGuid():N}"
-                                    .Substring(0, 32),
-                            reduceOnly: true);
-
-                if (!result.Success ||
-                    result.Data == null)
+                OrderSide closeSide = side == OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy;
+                string baseUrl = _useTestNet ? "https://testnet.binancefuture.com" : "https://fapi.binance.com";
+                var parameters = new SortedDictionary<string, string>
                 {
-                    return (
-                        false,
-                        string.Empty,
-                        result.Error?.Message ??
-                        "保护单创建失败");
+                    ["algoType"] = "CONDITIONAL",
+                    ["symbol"] = symbol,
+                    ["side"] = closeSide == OrderSide.Buy ? "BUY" : "SELL",
+                    ["type"] = "STOP_MARKET",
+                    ["quantity"] = normalizedQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["triggerPrice"] = normalizedStopPrice.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["workingType"] = "MARK_PRICE",
+                    ["reduceOnly"] = "true",
+                    ["clientAlgoId"] = $"SL_{Guid.NewGuid():N}".Substring(0, 32),
+                    ["recvWindow"] = "5000",
+                    ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
+                };
+                string query = string.Join("&", parameters.Select(x => $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value)}"));
+                using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_apiSecret));
+                string signature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(query))).ToLowerInvariant();
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/fapi/v1/algoOrder?{query}&signature={signature}");
+                request.Headers.Add("X-MBX-APIKEY", _apiKey);
+                using HttpResponseMessage response = await _httpClient.SendAsync(request);
+                string body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    string error = body;
+                    try
+                    {
+                        using JsonDocument doc = JsonDocument.Parse(body);
+                        string msg = doc.RootElement.TryGetProperty("msg", out var m) ? (m.GetString() ?? body) : body;
+                        string code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetInt32().ToString() : "?";
+                        error = $"Binance错误 {code}: {msg}";
+                    } catch { }
+                    return (false, string.Empty, error);
                 }
-
-                long orderId = result.Data.Id;
-
-                // 保存保护单映射
+                using JsonDocument json = JsonDocument.Parse(body);
+                long orderId = json.RootElement.TryGetProperty("algoId", out var idElement) ? idElement.GetInt64() : 0;
+                if (orderId <= 0) return (false, string.Empty, $"保护单创建成功但未返回有效订单ID: {body}");
                 lock (_stopOrderLock)
                 {
-                    _stopOrders[orderId] = new StopOrderInfo
-                    {
-                        OrderId = orderId,
-                        Symbol = symbol,
-                        PositionSide = side,
-                        Quantity = quantity,
-                        StopPrice = stopPrice
-                    };
+                    _stopOrders[orderId] = new StopOrderInfo { OrderId = orderId, Symbol = symbol, PositionSide = side, Quantity = normalizedQuantity, StopPrice = normalizedStopPrice };
                 }
-
-                return (
-                    true,
-                    orderId.ToString(),
-                    string.Empty);
+                return (true, orderId.ToString(), string.Empty);
             }
             catch (Exception ex)
             {
-                return (
-                    false,
-                    string.Empty,
-                    ex.Message);
+                return (false, string.Empty, ex.Message);
             }
         }
 
@@ -750,6 +754,89 @@ namespace OrderWatchLite.Services
             {
                 return new List<PositionInfo>();
             }
+        }
+
+        // ============================================================
+        // Binance 数量/价格精度处理
+        // ============================================================
+
+        private async Task<decimal> NormalizeQuantityAsync(string symbol, decimal quantity)
+        {
+            var info = await GetLotSizeInfoAsync(symbol);
+            if (info == null || info.StepSize <= 0)
+                return quantity;
+
+            decimal steps = Math.Floor(quantity / info.StepSize);
+            decimal result = steps * info.StepSize;
+
+            if (result < info.MinQty)
+                return 0m;
+
+            if (result > info.MaxQty)
+                result = info.MaxQty;
+
+            return result;
+        }
+
+        private async Task<decimal> NormalizePriceAsync(string symbol, decimal price, OrderSide positionSide)
+        {
+            if (price <= 0)
+                return 0m;
+
+            decimal tickSize = 0m;
+            lock (_priceTickLock)
+            {
+                _priceTickCache.TryGetValue(symbol, out tickSize);
+            }
+
+            if (tickSize <= 0)
+            {
+                try
+                {
+                    string baseUrl = _useTestNet ? "https://testnet.binancefuture.com" : "https://fapi.binance.com";
+                    string json = await _httpClient.GetStringAsync($"{baseUrl}/fapi/v1/exchangeInfo");
+                    using JsonDocument doc = JsonDocument.Parse(json);
+                    foreach (var item in doc.RootElement.GetProperty("symbols").EnumerateArray())
+                    {
+                        if (!item.TryGetProperty("symbol", out var sym) ||
+                            !string.Equals(sym.GetString(), symbol, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (item.TryGetProperty("filters", out var filters))
+                        {
+                            foreach (var filter in filters.EnumerateArray())
+                            {
+                                if (filter.TryGetProperty("filterType", out var ft) &&
+                                    ft.GetString() == "PRICE_FILTER" &&
+                                    filter.TryGetProperty("tickSize", out var ts))
+                                {
+                                    decimal.TryParse(ts.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out tickSize);
+                                    break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+
+                    if (tickSize > 0)
+                    {
+                        lock (_priceTickLock)
+                            _priceTickCache[symbol] = tickSize;
+                    }
+                }
+                catch
+                {
+                    // 如果交易所信息暂时获取失败，保留原价格；真正下单时 Binance 会返回明确错误。
+                }
+            }
+
+            if (tickSize <= 0)
+                return price;
+
+            // 止损价格统一向交易所合法 TickSize 对齐。
+            decimal steps = Math.Floor(price / tickSize);
+            decimal result = steps * tickSize;
+            return result > 0 ? result : price;
         }
 
         // ============================================================

@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Binance.Net" Version="13.4.0" />
+    <PackageReference Include="Binance.Net" Version="13.5.0" />
   </ItemGroup>
 
 </Project>
