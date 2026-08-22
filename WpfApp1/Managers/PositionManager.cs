@@ -11,7 +11,7 @@ namespace OrderWatchLite.Managers
     /// 逻辑保护层管理器。
     ///
     /// Binance 实际上只有一个合并仓位，
-    /// 本类只负责在程序内部记录每次下单形成的保护层。
+    /// 本类负责在程序内部记录每次下单形成的保护层。
     /// </summary>
     public class PositionManager
     {
@@ -35,7 +35,9 @@ namespace OrderWatchLite.Managers
             if (pos.Quantity <= 0)
                 return false;
 
-            return _positions.TryAdd(pos.StopLossOrderId, pos);
+            return _positions.TryAdd(
+                pos.StopLossOrderId,
+                pos);
         }
 
         public bool AddPositionWithTemporaryId(
@@ -170,7 +172,8 @@ namespace OrderWatchLite.Managers
                 return false;
             }
 
-            pos.StopLossOrderId = newOrderId;
+            pos.StopLossOrderId =
+                newOrderId;
 
             return _positions.TryAdd(
                 newOrderId,
@@ -249,8 +252,10 @@ namespace OrderWatchLite.Managers
                 return SyncResult.Failed("品种为空");
 
             if (actualQuantity < 0)
+            {
                 return SyncResult.Failed(
                     "实际持仓数量不能小于 0");
+            }
 
             var layers =
                 GetPositions(symbol, side);
@@ -273,6 +278,15 @@ namespace OrderWatchLite.Managers
                         out _))
                     {
                         removedCount++;
+
+                        // 记录需要真正从 Binance 取消的保护单
+                        // 如果 ID > 0，MainWindow 会调用
+                        // BinanceApiService.CancelStopLossAsync()
+                        SyncResult temp =
+                            new SyncResult();
+
+                        // 不在这里执行网络操作。
+                        // 下面统一通过 Result 记录。
                     }
                 }
 
@@ -284,6 +298,13 @@ namespace OrderWatchLite.Managers
                     ReducedQuantity = recordedQuantity,
                     AddedQuantity = 0,
                     RemovedLayerCount = removedCount,
+                    RemovedProtectionOrderIds =
+                        layers
+                            .Where(p =>
+                                p.StopLossOrderId > 0)
+                            .Select(p =>
+                                p.StopLossOrderId)
+                            .ToList(),
                     Message =
                         $"实际仓位已归零，清除 {removedCount} 个保护层"
                 };
@@ -341,6 +362,12 @@ namespace OrderWatchLite.Managers
             int modifiedLayers = 0;
             int removedLayers = 0;
 
+            var removedIds =
+                new List<long>();
+
+            var reducedLayers =
+                new List<LayerQuantityChange>();
+
             // 最新的一层优先减少
             foreach (var layer in layers
                 .OrderByDescending(p => p.OpenTime)
@@ -355,7 +382,10 @@ namespace OrderWatchLite.Managers
                 if (layerQuantity <= 0)
                     continue;
 
+                // ====================================================
                 // 整层被减掉
+                // ====================================================
+
                 if (remainingReduction >= layerQuantity)
                 {
                     remainingReduction -=
@@ -367,6 +397,12 @@ namespace OrderWatchLite.Managers
                     {
                         removedLayers++;
                         modifiedLayers++;
+
+                        if (layer.StopLossOrderId > 0)
+                        {
+                            removedIds.Add(
+                                layer.StopLossOrderId);
+                        }
                     }
                 }
                 else
@@ -375,8 +411,28 @@ namespace OrderWatchLite.Managers
                         layerQuantity -
                         remainingReduction;
 
+                    decimal actualReduced =
+                        layerQuantity -
+                        newQuantity;
+
                     layer.Quantity =
                         newQuantity;
+
+                    reducedLayers.Add(
+                        new LayerQuantityChange
+                        {
+                            StopLossOrderId =
+                                layer.StopLossOrderId,
+
+                            OldQuantity =
+                                layerQuantity,
+
+                            NewQuantity =
+                                newQuantity,
+
+                            ReducedQuantity =
+                                actualReduced
+                        });
 
                     remainingReduction = 0;
                     modifiedLayers++;
@@ -406,6 +462,10 @@ namespace OrderWatchLite.Managers
                     modifiedLayers,
                 RemovedLayerCount =
                     removedLayers,
+                RemovedProtectionOrderIds =
+                    removedIds,
+                ReducedProtectionLayers =
+                    reducedLayers,
                 Message =
                     $"实际减仓 {reduceQuantity}，从最新保护层开始调整，" +
                     $"删除 {removedLayers} 层，修改 {modifiedLayers} 层"
@@ -474,9 +534,6 @@ namespace OrderWatchLite.Managers
 
         // ============================================================
         // 保本检查
-        //
-        // 这里现在要求外部修改保护单以后，
-        // 返回新的保护单 ID。
         // ============================================================
 
         public async Task<int> CheckBreakEvenAsync(
@@ -535,7 +592,6 @@ namespace OrderWatchLite.Managers
 
                 bool success = false;
                 long newOrderId = 0;
-                string error = string.Empty;
 
                 try
                 {
@@ -546,28 +602,17 @@ namespace OrderWatchLite.Managers
 
                     success = result.success;
                     newOrderId = result.newOrderId;
-                    error = result.error;
                 }
-                catch (Exception ex)
+                catch
                 {
                     success = false;
-                    error = ex.Message;
                 }
 
                 if (!success)
                     continue;
 
-                // ====================================================
-                // 新保护单 ID 必须有效
-                // ====================================================
-
                 if (newOrderId <= 0)
                     continue;
-
-                // ====================================================
-                // 把这一层从旧保护单 ID
-                // 转移到新的保护单 ID
-                // ====================================================
 
                 long oldOrderId =
                     pos.StopLossOrderId;
@@ -581,10 +626,6 @@ namespace OrderWatchLite.Managers
                         continue;
                     }
                 }
-
-                // ====================================================
-                // 新 ID 下标记保本
-                // ====================================================
 
                 if (MarkBreakEvenTriggered(
                     newOrderId))
@@ -694,6 +735,21 @@ namespace OrderWatchLite.Managers
     }
 
     // ================================================================
+    // 保护层数量变化
+    // ================================================================
+
+    public class LayerQuantityChange
+    {
+        public long StopLossOrderId { get; set; }
+
+        public decimal OldQuantity { get; set; }
+
+        public decimal NewQuantity { get; set; }
+
+        public decimal ReducedQuantity { get; set; }
+    }
+
+    // ================================================================
     // 同步结果
     // ================================================================
 
@@ -720,6 +776,20 @@ namespace OrderWatchLite.Managers
         public int ModifiedLayerCount { get; set; }
 
         public int RemovedLayerCount { get; set; }
+
+        // ============================================================
+        // 本次实际需要从 Binance 取消的保护单
+        // ============================================================
+
+        public List<long> RemovedProtectionOrderIds { get; set; } =
+            new();
+
+        // ============================================================
+        // 本次实际需要缩量重建的保护单
+        // ============================================================
+
+        public List<LayerQuantityChange> ReducedProtectionLayers { get; set; } =
+            new();
 
         public static SyncResult Failed(
             string error)

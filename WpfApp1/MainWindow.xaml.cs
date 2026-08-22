@@ -69,10 +69,11 @@ namespace OrderWatchLite
 
             LogListBox.ItemsSource = _logEntries;
 
-            _binanceApi = new BinanceApiService(
-                _apiKey,
-                _apiSecret,
-                _useTestNet);
+            _binanceApi =
+                new BinanceApiService(
+                    _apiKey,
+                    _apiSecret,
+                    _useTestNet);
 
             SliderPosition.ValueChanged +=
                 SliderPosition_ValueChanged;
@@ -98,6 +99,18 @@ namespace OrderWatchLite
             timer.Tick += async (s, e) =>
             {
                 await UpdatePriceAndBalanceAsync();
+
+                // ====================================================
+                // 定时同步真实 Binance 持仓
+                //
+                // 这里现在也会自动发现：
+                // Binance客户端手动平仓
+                // 部分平仓
+                // 全部平仓
+                // 手动加仓
+                // ====================================================
+
+                await RefreshPositionsAsync(false);
 
                 if (_isBreakEvenEnabled)
                     await CheckBreakEvenAsync();
@@ -462,7 +475,6 @@ namespace OrderWatchLite
                     return;
                 }
 
-                // 下单前先扫描 Binance
                 await RefreshPositionsAsync(false);
 
                 decimal ratio =
@@ -589,7 +601,6 @@ namespace OrderWatchLite
                     ??
                     _currentPrice;
 
-                // 新增逻辑保护层
                 if (stopOrderId > 0)
                 {
                     var layer =
@@ -598,9 +609,11 @@ namespace OrderWatchLite
                             Symbol =
                                 _selectedSymbol,
 
-                            Side = side,
+                            Side =
+                                side,
 
-                            Quantity = qty,
+                            Quantity =
+                                qty,
 
                             EntryPrice =
                                 actualEntryPrice,
@@ -657,7 +670,7 @@ namespace OrderWatchLite
         }
 
         // ============================================================
-        // 刷新真实持仓
+        // 刷新真实持仓 + 自动同步保护单
         // ============================================================
 
         private async void BtnRefreshOrders_Click(
@@ -690,14 +703,122 @@ namespace OrderWatchLite
                 _currentPositions =
                     newPositions;
 
+                // ====================================================
+                // 先同步 Binance 当前实际存在的仓位
+                // ====================================================
+
                 foreach (var pos in newPositions)
                 {
+                    // 记录同步前的保护层
+                    // 这样可以准确知道哪些保护单发生了变化。
+                    var beforeLayers =
+                        _positionManager
+                            .GetPositions(
+                                pos.Symbol,
+                                pos.Side)
+                            .Select(
+                                p => new
+                                {
+                                    Id =
+                                        p.StopLossOrderId,
+
+                                    Quantity =
+                                        p.Quantity
+                                })
+                            .ToDictionary(
+                                x => x.Id,
+                                x => x.Quantity);
+
                     var syncResult =
                         _positionManager
                             .SyncWithActualPosition(
                                 pos.Symbol,
                                 pos.Side,
                                 pos.Quantity);
+
+                    // =================================================
+                    // 1. 已经整层被减掉
+                    //    → 取消 Binance 对应 Algo Order
+                    // =================================================
+
+                    foreach (
+                        long stopOrderId
+                        in syncResult.RemovedProtectionOrderIds)
+                    {
+                        bool cancelled =
+                            await _binanceApi
+                                .CancelStopLossAsync(
+                                    stopOrderId);
+
+                        if (cancelled)
+                        {
+                            AddLog(
+                                $"🗑️ 已取消多余保护单: " +
+                                $"{stopOrderId}");
+                        }
+                        else
+                        {
+                            AddLog(
+                                $"⚠️ 保护单取消失败: " +
+                                $"{stopOrderId}");
+                        }
+                    }
+
+                    // =================================================
+                    // 2. 某一层只减少一部分
+                    //    → 取消旧 Algo Order
+                    //    → 按新数量重新创建
+                    //    → 更新 PositionManager ID
+                    // =================================================
+
+                    foreach (
+                        var change
+                        in syncResult.ReducedProtectionLayers)
+                    {
+                        if (change.StopLossOrderId <= 0)
+                            continue;
+
+                        if (change.NewQuantity <= 0)
+                            continue;
+
+                        var replaceResult =
+                            await _binanceApi
+                                .ReplaceStopLossQuantityAsync(
+                                    change.StopLossOrderId,
+                                    change.NewQuantity);
+
+                        if (!replaceResult.success)
+                        {
+                            AddLog(
+                                $"❌ 保护单数量同步失败: " +
+                                $"{change.StopLossOrderId} " +
+                                $"{replaceResult.error}");
+
+                            continue;
+                        }
+
+                        if (!_positionManager
+                            .UpdateStopLossOrderId(
+                                change.StopLossOrderId,
+                                replaceResult.newOrderId))
+                        {
+                            AddLog(
+                                $"⚠️ 新保护单ID同步失败: " +
+                                $"{replaceResult.newOrderId}");
+                        }
+                        else
+                        {
+                            AddLog(
+                                $"🔄 保护单数量已调整: " +
+                                $"{change.OldQuantity} → " +
+                                $"{change.NewQuantity}，" +
+                                $"新ID: {replaceResult.newOrderId}");
+                        }
+                    }
+
+                    // =================================================
+                    // 3. 检测手动加仓
+                    // =================================================
 
                     if (syncResult.AddedQuantity > 0 &&
                         syncResult.PreviousQuantity > 0)
@@ -708,6 +829,10 @@ namespace OrderWatchLite
                             syncResult.PreviousQuantity);
                     }
                 }
+
+                // ====================================================
+                // 处理原来有、现在完全消失的持仓
+                // ====================================================
 
                 foreach (var oldPos in oldPositions)
                 {
@@ -722,13 +847,72 @@ namespace OrderWatchLite
                                 &&
                                 p.Quantity > 0);
 
-                    if (!stillExists)
-                    {
+                    if (stillExists)
+                        continue;
+
+                    var beforeLayers =
+                        _positionManager
+                            .GetPositions(
+                                oldPos.Symbol,
+                                oldPos.Side)
+                            .Select(
+                                p => p.StopLossOrderId)
+                            .Where(
+                                id => id > 0)
+                            .ToList();
+
+                    var syncResult =
                         _positionManager
                             .SyncWithActualPosition(
                                 oldPos.Symbol,
                                 oldPos.Side,
                                 0);
+
+                    foreach (
+                        long stopOrderId
+                        in syncResult.RemovedProtectionOrderIds)
+                    {
+                        bool cancelled =
+                            await _binanceApi
+                                .CancelStopLossAsync(
+                                    stopOrderId);
+
+                        if (cancelled)
+                        {
+                            AddLog(
+                                $"🗑️ 持仓归零，已取消保护单: " +
+                                $"{stopOrderId}");
+                        }
+                        else
+                        {
+                            AddLog(
+                                $"⚠️ 持仓归零，但保护单取消失败: " +
+                                $"{stopOrderId}");
+                        }
+                    }
+
+                    // 兼容旧状态：
+                    // 如果 SyncResult 没有记录到，但本地确实还有保护层，
+                    // 再逐个尝试取消。
+                    foreach (long stopOrderId in beforeLayers)
+                    {
+                        if (syncResult.RemovedProtectionOrderIds
+                            .Contains(stopOrderId))
+                        {
+                            continue;
+                        }
+
+                        bool cancelled =
+                            await _binanceApi
+                                .CancelStopLossAsync(
+                                    stopOrderId);
+
+                        if (cancelled)
+                        {
+                            AddLog(
+                                $"🗑️ 清理残留保护单: " +
+                                $"{stopOrderId}");
+                        }
                     }
                 }
 
@@ -818,23 +1002,23 @@ namespace OrderWatchLite
             if (difference <= 0)
                 return;
 
-            // 加仓数量必须再次按照 Binance 当前交易对的数量步长处理。
-            // Binance 返回的实际持仓数量与本地逻辑层相减后，可能产生多余小数位。
             var stepInfo =
                 await _binanceApi.GetLotSizeInfoAsync(
                     actualPosition.Symbol);
 
             if (stepInfo != null)
             {
-                difference = RoundToLotSize(
-                    difference,
-                    stepInfo.StepSize);
+                difference =
+                    RoundToLotSize(
+                        difference,
+                        stepInfo.StepSize);
             }
 
             if (difference <= 0)
             {
                 AddLog(
                     "⚠️ 检测到加仓，但按 Binance 数量精度处理后数量过小");
+
                 return;
             }
 
@@ -855,9 +1039,6 @@ namespace OrderWatchLite
                 $"{actualPosition.Symbol} " +
                 $"{difference}");
 
-            // ============================================================
-            // 【修改点】side 参数直接传 actualPosition.Side，不再反转
-            // ============================================================
             var stopResult =
                 await _binanceApi
                     .PlaceReduceOnlyStopMarketAsync(
@@ -865,7 +1046,7 @@ namespace OrderWatchLite
                             actualPosition.Symbol,
 
                         side:
-                            actualPosition.Side,    // <--- 已修改
+                            actualPosition.Side,
 
                         quantity:
                             difference,
@@ -1030,7 +1211,7 @@ namespace OrderWatchLite
         }
 
         // ============================================================
-        // 平仓选中  【已修改】
+        // 平仓选中
         // ============================================================
 
         private async void BtnCloseSelected_Click(
@@ -1038,7 +1219,8 @@ namespace OrderWatchLite
             RoutedEventArgs e)
         {
             var selected =
-                PositionListBox.SelectedItem as PositionInfo;
+                PositionListBox.SelectedItem
+                as PositionInfo;
 
             if (selected == null)
             {

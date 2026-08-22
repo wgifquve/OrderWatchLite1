@@ -32,13 +32,14 @@ namespace OrderWatchLite.Services
         private ExchangeInfoCache? _exchangeInfoCache;
         private readonly SemaphoreSlim _exchangeInfoLock = new(1, 1);
         private readonly TimeSpan _cacheExpiry = TimeSpan.FromMinutes(5);
-        private readonly Dictionary<string, decimal> _priceTickCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, decimal> _priceTickCache =
+            new(StringComparer.OrdinalIgnoreCase);
         private readonly object _priceTickLock = new();
 
         // ============================================================
         // 保护单本地映射
         //
-        // OrderId -> 保护单信息
+        // AlgoId -> 保护单信息
         // ============================================================
 
         private readonly Dictionary<long, StopOrderInfo> _stopOrders = new();
@@ -183,12 +184,6 @@ namespace OrderWatchLite.Services
 
         // ============================================================
         // 主单 + 保护止损
-        //
-        // 市价开仓
-        // ↓
-        // 成交
-        // ↓
-        // Reduce-Only STOP-MARKET
         // ============================================================
 
         public async Task<(
@@ -222,10 +217,6 @@ namespace OrderWatchLite.Services
                         "止损价格必须大于 0");
                 }
 
-                // ====================================================
-                // 1. 市价主单
-                // ====================================================
-
                 var mainResult =
                     await _restClient.UsdFuturesApi.Trading
                         .PlaceOrderAsync(
@@ -248,10 +239,6 @@ namespace OrderWatchLite.Services
                 }
 
                 long mainOrderId = mainResult.Data.Id;
-
-                // ====================================================
-                // 2. 创建独立 Reduce-Only STOP-MARKET
-                // ====================================================
 
                 var stopResult =
                     await PlaceReduceOnlyStopMarketInternalAsync(
@@ -287,11 +274,6 @@ namespace OrderWatchLite.Services
 
         // ============================================================
         // 创建独立 Reduce-Only STOP-MARKET
-        //
-        // side 表示当前持仓方向：
-        //
-        // BUY  = 多仓
-        // SELL = 空仓
         // ============================================================
 
         public async Task<(
@@ -346,7 +328,7 @@ namespace OrderWatchLite.Services
         }
 
         // ============================================================
-        // 内部真正创建保护单的方法
+        // 内部真正创建保护单
         // ============================================================
 
         private async Task<(
@@ -354,88 +336,315 @@ namespace OrderWatchLite.Services
             string orderId,
             string error)>
             PlaceReduceOnlyStopMarketInternalAsync(
-                string symbol, OrderSide side, decimal quantity, decimal stopPrice)
+                string symbol,
+                OrderSide side,
+                decimal quantity,
+                decimal stopPrice)
         {
             try
             {
-                // Binance Futures 已将 STOP_MARKET 条件单迁移到 Algo Order 接口。
-                // 这里必须同时按照 Binance 的数量步长和价格 TickSize 规范化。
-                // 尤其是“加仓保护单”：加仓成交价经过加权反推后，往往会产生很多小数位，
-                // 如果直接把这个价格交给 Binance，就会出现 -1111 Precision is over the maximum defined for this asset。
-                decimal normalizedQuantity = await NormalizeQuantityAsync(symbol, quantity);
+                decimal normalizedQuantity =
+                    await NormalizeQuantityAsync(symbol, quantity);
+
                 if (normalizedQuantity <= 0)
-                    return (false, string.Empty, "保护单数量经过交易所步长处理后为 0");
+                    return (
+                        false,
+                        string.Empty,
+                        "保护单数量经过交易所步长处理后为 0");
 
-                decimal normalizedStopPrice = await NormalizePriceAsync(symbol, stopPrice, side);
+                decimal normalizedStopPrice =
+                    await NormalizePriceAsync(
+                        symbol,
+                        stopPrice,
+                        side);
+
                 if (normalizedStopPrice <= 0)
-                    return (false, string.Empty, "保护单价格经过交易所价格精度处理后无效");
+                    return (
+                        false,
+                        string.Empty,
+                        "保护单价格经过交易所价格精度处理后无效");
 
-                OrderSide closeSide = side == OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy;
-                string baseUrl = _useTestNet ? "https://testnet.binancefuture.com" : "https://fapi.binance.com";
-                var parameters = new SortedDictionary<string, string>
-                {
-                    ["algoType"] = "CONDITIONAL",
-                    ["symbol"] = symbol,
-                    ["side"] = closeSide == OrderSide.Buy ? "BUY" : "SELL",
-                    ["type"] = "STOP_MARKET",
-                    ["quantity"] = normalizedQuantity.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["triggerPrice"] = normalizedStopPrice.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["workingType"] = "MARK_PRICE",
-                    ["reduceOnly"] = "true",
-                    ["clientAlgoId"] = $"SL_{Guid.NewGuid():N}".Substring(0, 32),
-                    ["recvWindow"] = "5000",
-                    ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
-                };
-                string query = string.Join("&", parameters.Select(x => $"{Uri.EscapeDataString(x.Key)}={Uri.EscapeDataString(x.Value)}"));
-                using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_apiSecret));
-                string signature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(query))).ToLowerInvariant();
-                using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/fapi/v1/algoOrder?{query}&signature={signature}");
-                request.Headers.Add("X-MBX-APIKEY", _apiKey);
-                using HttpResponseMessage response = await _httpClient.SendAsync(request);
-                string body = await response.Content.ReadAsStringAsync();
+                OrderSide closeSide =
+                    side == OrderSide.Buy
+                        ? OrderSide.Sell
+                        : OrderSide.Buy;
+
+                string baseUrl =
+                    _useTestNet
+                        ? "https://testnet.binancefuture.com"
+                        : "https://fapi.binance.com";
+
+                var parameters =
+                    new SortedDictionary<string, string>
+                    {
+                        ["algoType"] = "CONDITIONAL",
+                        ["symbol"] = symbol,
+                        ["side"] =
+                            closeSide == OrderSide.Buy
+                                ? "BUY"
+                                : "SELL",
+                        ["type"] = "STOP_MARKET",
+                        ["quantity"] =
+                            normalizedQuantity.ToString(
+                                System.Globalization.CultureInfo.InvariantCulture),
+                        ["triggerPrice"] =
+                            normalizedStopPrice.ToString(
+                                System.Globalization.CultureInfo.InvariantCulture),
+                        ["workingType"] = "MARK_PRICE",
+                        ["reduceOnly"] = "true",
+                        ["clientAlgoId"] =
+                            $"SL_{Guid.NewGuid():N}".Substring(0, 32),
+                        ["recvWindow"] = "5000",
+                        ["timestamp"] =
+                            DateTimeOffset.UtcNow
+                                .ToUnixTimeMilliseconds()
+                                .ToString()
+                    };
+
+                string query =
+                    string.Join(
+                        "&",
+                        parameters.Select(
+                            x =>
+                                $"{Uri.EscapeDataString(x.Key)}=" +
+                                $"{Uri.EscapeDataString(x.Value)}"));
+
+                using var hmac =
+                    new HMACSHA256(
+                        Encoding.UTF8.GetBytes(_apiSecret));
+
+                string signature =
+                    Convert.ToHexString(
+                        hmac.ComputeHash(
+                            Encoding.UTF8.GetBytes(query)))
+                        .ToLowerInvariant();
+
+                using var request =
+                    new HttpRequestMessage(
+                        HttpMethod.Post,
+                        $"{baseUrl}/fapi/v1/algoOrder?" +
+                        $"{query}&signature={signature}");
+
+                request.Headers.Add(
+                    "X-MBX-APIKEY",
+                    _apiKey);
+
+                using HttpResponseMessage response =
+                    await _httpClient.SendAsync(request);
+
+                string body =
+                    await response.Content.ReadAsStringAsync();
+
                 if (!response.IsSuccessStatusCode)
                 {
                     string error = body;
+
                     try
                     {
-                        using JsonDocument doc = JsonDocument.Parse(body);
-                        string msg = doc.RootElement.TryGetProperty("msg", out var m) ? (m.GetString() ?? body) : body;
-                        string code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetInt32().ToString() : "?";
-                        error = $"Binance错误 {code}: {msg}";
-                    } catch { }
-                    return (false, string.Empty, error);
+                        using JsonDocument doc =
+                            JsonDocument.Parse(body);
+
+                        string msg =
+                            doc.RootElement.TryGetProperty(
+                                "msg",
+                                out var m)
+                                ? (m.GetString() ?? body)
+                                : body;
+
+                        string code =
+                            doc.RootElement.TryGetProperty(
+                                "code",
+                                out var c)
+                                ? c.GetInt32().ToString()
+                                : "?";
+
+                        error =
+                            $"Binance错误 {code}: {msg}";
+                    }
+                    catch
+                    {
+                    }
+
+                    return (
+                        false,
+                        string.Empty,
+                        error);
                 }
-                using JsonDocument json = JsonDocument.Parse(body);
-                long orderId = json.RootElement.TryGetProperty("algoId", out var idElement) ? idElement.GetInt64() : 0;
-                if (orderId <= 0) return (false, string.Empty, $"保护单创建成功但未返回有效订单ID: {body}");
+
+                using JsonDocument json =
+                    JsonDocument.Parse(body);
+
+                long orderId =
+                    json.RootElement.TryGetProperty(
+                        "algoId",
+                        out var idElement)
+                        ? idElement.GetInt64()
+                        : 0;
+
+                if (orderId <= 0)
+                {
+                    return (
+                        false,
+                        string.Empty,
+                        $"保护单创建成功但未返回有效订单ID: {body}");
+                }
+
                 lock (_stopOrderLock)
                 {
-                    _stopOrders[orderId] = new StopOrderInfo { OrderId = orderId, Symbol = symbol, PositionSide = side, Quantity = normalizedQuantity, StopPrice = normalizedStopPrice };
+                    _stopOrders[orderId] =
+                        new StopOrderInfo
+                        {
+                            OrderId = orderId,
+                            Symbol = symbol,
+                            PositionSide = side,
+                            Quantity = normalizedQuantity,
+                            StopPrice = normalizedStopPrice
+                        };
                 }
-                return (true, orderId.ToString(), string.Empty);
+
+                return (
+                    true,
+                    orderId.ToString(),
+                    string.Empty);
             }
             catch (Exception ex)
             {
-                return (false, string.Empty, ex.Message);
+                return (
+                    false,
+                    string.Empty,
+                    ex.Message);
             }
         }
 
         // ============================================================
-        // 修改保护单
+        // 正确取消 Binance Algo Order
         //
-        // Binance 没有直接修改原 STOP-MARKET 的逻辑：
+        // 重要：
+        // 保护单是 /fapi/v1/algoOrder 创建的，
+        // 因此不能使用普通 CancelOrderAsync。
+        // ============================================================
+
+        private async Task<(
+            bool success,
+            string error)>
+            CancelAlgoOrderInternalAsync(
+                string symbol,
+                long algoId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(symbol))
+                    return (
+                        false,
+                        "交易对不能为空");
+
+                if (algoId <= 0)
+                    return (
+                        false,
+                        "Algo Order ID 无效");
+
+                string baseUrl =
+                    _useTestNet
+                        ? "https://testnet.binancefuture.com"
+                        : "https://fapi.binance.com";
+
+                var parameters =
+                    new SortedDictionary<string, string>
+                    {
+                        ["symbol"] = symbol,
+                        ["algoId"] = algoId.ToString(),
+                        ["recvWindow"] = "5000",
+                        ["timestamp"] =
+                            DateTimeOffset.UtcNow
+                                .ToUnixTimeMilliseconds()
+                                .ToString()
+                    };
+
+                string query =
+                    string.Join(
+                        "&",
+                        parameters.Select(
+                            x =>
+                                $"{Uri.EscapeDataString(x.Key)}=" +
+                                $"{Uri.EscapeDataString(x.Value)}"));
+
+                using var hmac =
+                    new HMACSHA256(
+                        Encoding.UTF8.GetBytes(_apiSecret));
+
+                string signature =
+                    Convert.ToHexString(
+                        hmac.ComputeHash(
+                            Encoding.UTF8.GetBytes(query)))
+                        .ToLowerInvariant();
+
+                using var request =
+                    new HttpRequestMessage(
+                        HttpMethod.Delete,
+                        $"{baseUrl}/fapi/v1/algoOrder?" +
+                        $"{query}&signature={signature}");
+
+                request.Headers.Add(
+                    "X-MBX-APIKEY",
+                    _apiKey);
+
+                using HttpResponseMessage response =
+                    await _httpClient.SendAsync(request);
+
+                string body =
+                    await response.Content.ReadAsStringAsync();
+
+                if (response.IsSuccessStatusCode)
+                    return (true, string.Empty);
+
+                string error = body;
+
+                try
+                {
+                    using JsonDocument doc =
+                        JsonDocument.Parse(body);
+
+                    string msg =
+                        doc.RootElement.TryGetProperty(
+                            "msg",
+                            out var m)
+                            ? (m.GetString() ?? body)
+                            : body;
+
+                    string code =
+                        doc.RootElement.TryGetProperty(
+                            "code",
+                            out var c)
+                            ? c.GetInt32().ToString()
+                            : "?";
+
+                    error =
+                        $"Binance取消Algo订单错误 {code}: {msg}";
+                }
+                catch
+                {
+                }
+
+                return (
+                    false,
+                    error);
+            }
+            catch (Exception ex)
+            {
+                return (
+                    false,
+                    ex.Message);
+            }
+        }
+
+        // ============================================================
+        // 修改保护单价格
         //
-        // 原保护单
-        //      ↓
-        // 撤销
-        //      ↓
-        // 创建新的保护单
+        // Algo Order 没有直接修改原保护单的方式：
         //
-        // 返回：
-        //
-        // success    是否成功
-        // newOrderId 新保护单 ID
-        // error      错误信息
+        // 取消旧 Algo Order
+        // ↓
+        // 创建新 Algo Order
         // ============================================================
 
         public async Task<(
@@ -449,20 +658,16 @@ namespace OrderWatchLite.Services
             try
             {
                 if (stopLossOrderId <= 0)
-                {
                     return (
                         false,
                         0,
                         "原保护单ID无效");
-                }
 
                 if (newStopPrice <= 0)
-                {
                     return (
                         false,
                         0,
                         "新的止损价格必须大于 0");
-                }
 
                 StopOrderInfo? oldOrder = null;
 
@@ -473,8 +678,6 @@ namespace OrderWatchLite.Services
                         out oldOrder);
                 }
 
-                // 如果程序内部没有找到原保护单，
-                // 不猜 symbol / direction / quantity。
                 if (oldOrder == null)
                 {
                     return (
@@ -483,28 +686,18 @@ namespace OrderWatchLite.Services
                         $"找不到保护单 {stopLossOrderId} 的本地记录");
                 }
 
-                // ====================================================
-                // 1. 撤销旧保护单
-                // ====================================================
-
                 var cancelResult =
-                    await _restClient.UsdFuturesApi.Trading
-                        .CancelOrderAsync(
-                            oldOrder.Symbol,
-                            orderId: stopLossOrderId);
+                    await CancelAlgoOrderInternalAsync(
+                        oldOrder.Symbol,
+                        stopLossOrderId);
 
-                if (!cancelResult.Success)
+                if (!cancelResult.success)
                 {
                     return (
                         false,
                         0,
-                        cancelResult.Error?.Message ??
-                        "撤销旧保护单失败");
+                        $"撤销旧Algo保护单失败: {cancelResult.error}");
                 }
-
-                // ====================================================
-                // 2. 创建新的 Reduce-Only STOP-MARKET
-                // ====================================================
 
                 var newOrder =
                     await PlaceReduceOnlyStopMarketInternalAsync(
@@ -521,11 +714,9 @@ namespace OrderWatchLite.Services
                         $"新保护单创建失败: {newOrder.error}");
                 }
 
-                long newOrderId = 0;
-
                 if (!long.TryParse(
                     newOrder.orderId,
-                    out newOrderId)
+                    out long newOrderId)
                     ||
                     newOrderId <= 0)
                 {
@@ -535,15 +726,124 @@ namespace OrderWatchLite.Services
                         "新保护单创建成功，但订单ID无效");
                 }
 
-                // ====================================================
-                // 3. 删除旧保护单映射
-                //
-                // 新保护单已经在内部方法中登记。
-                // ====================================================
+                lock (_stopOrderLock)
+                {
+                    _stopOrders.Remove(
+                        stopLossOrderId);
+                }
+
+                return (
+                    true,
+                    newOrderId,
+                    string.Empty);
+            }
+            catch (Exception ex)
+            {
+                return (
+                    false,
+                    0,
+                    ex.Message);
+            }
+        }
+
+        // ============================================================
+        // 修改保护单数量
+        //
+        // 用于：
+        //
+        // 原保护单 1.0
+        // 实际仓位减少 0.4
+        // ↓
+        // 新保护单 0.6
+        // ============================================================
+
+        public async Task<(
+            bool success,
+            long newOrderId,
+            string error)>
+            ReplaceStopLossQuantityAsync(
+                long stopLossOrderId,
+                decimal newQuantity)
+        {
+            try
+            {
+                if (stopLossOrderId <= 0)
+                {
+                    return (
+                        false,
+                        0,
+                        "保护单ID无效");
+                }
+
+                if (newQuantity <= 0)
+                {
+                    return (
+                        false,
+                        0,
+                        "新的保护数量必须大于0");
+                }
+
+                StopOrderInfo? oldOrder = null;
 
                 lock (_stopOrderLock)
                 {
-                    _stopOrders.Remove(stopLossOrderId);
+                    _stopOrders.TryGetValue(
+                        stopLossOrderId,
+                        out oldOrder);
+                }
+
+                if (oldOrder == null)
+                {
+                    return (
+                        false,
+                        0,
+                        $"找不到保护单 {stopLossOrderId} 的本地记录");
+                }
+
+                var cancelResult =
+                    await CancelAlgoOrderInternalAsync(
+                        oldOrder.Symbol,
+                        stopLossOrderId);
+
+                if (!cancelResult.success)
+                {
+                    return (
+                        false,
+                        0,
+                        $"撤销旧保护单失败: {cancelResult.error}");
+                }
+
+                var newOrder =
+                    await PlaceReduceOnlyStopMarketInternalAsync(
+                        oldOrder.Symbol,
+                        oldOrder.PositionSide,
+                        newQuantity,
+                        oldOrder.StopPrice);
+
+                if (!newOrder.success)
+                {
+                    return (
+                        false,
+                        0,
+                        $"重新创建保护单失败: {newOrder.error}");
+                }
+
+                if (!long.TryParse(
+                    newOrder.orderId,
+                    out long newOrderId)
+                    ||
+                    newOrderId <= 0)
+                {
+                    return (
+                        false,
+                        0,
+                        "新保护单创建成功，但订单ID无效");
+                }
+
+                lock (_stopOrderLock)
+                {
+                    _stopOrders.Remove(
+                        stopLossOrderId);
                 }
 
                 return (
@@ -582,17 +882,17 @@ namespace OrderWatchLite.Services
                     return false;
 
                 var result =
-                    await _restClient.UsdFuturesApi.Trading
-                        .CancelOrderAsync(
-                            info.Symbol,
-                            orderId: stopLossOrderId);
+                    await CancelAlgoOrderInternalAsync(
+                        info.Symbol,
+                        stopLossOrderId);
 
-                if (!result.Success)
+                if (!result.success)
                     return false;
 
                 lock (_stopOrderLock)
                 {
-                    _stopOrders.Remove(stopLossOrderId);
+                    _stopOrders.Remove(
+                        stopLossOrderId);
                 }
 
                 return true;
@@ -680,17 +980,22 @@ namespace OrderWatchLite.Services
                     return new List<PositionInfo>();
                 }
 
-                var positions = new List<PositionInfo>();
+                var positions =
+                    new List<PositionInfo>();
 
                 foreach (var p in result.Data)
                 {
-                    decimal positionAmt = p.PositionAmt;
+                    decimal positionAmt =
+                        p.PositionAmt;
 
                     if (positionAmt == 0)
                         continue;
 
-                    decimal entryPrice = p.EntryPrice;
-                    decimal markPrice = p.MarkPrice;
+                    decimal entryPrice =
+                        p.EntryPrice;
+
+                    decimal markPrice =
+                        p.MarkPrice;
 
                     decimal quantity =
                         Math.Abs(positionAmt);
@@ -735,17 +1040,18 @@ namespace OrderWatchLite.Services
                                 MidpointRounding.AwayFromZero);
                     }
 
-                    positions.Add(new PositionInfo
-                    {
-                        Symbol = p.Symbol,
-                        Quantity = quantity,
-                        Side = side,
-                        EntryPrice = entryPrice,
-                        MarkPrice = markPrice,
-                        UnrealizedPnl = unrealizedPnl,
-                        Leverage = leverage,
-                        PnlPercent = pnlPercent
-                    });
+                    positions.Add(
+                        new PositionInfo
+                        {
+                            Symbol = p.Symbol,
+                            Quantity = quantity,
+                            Side = side,
+                            EntryPrice = entryPrice,
+                            MarkPrice = markPrice,
+                            UnrealizedPnl = unrealizedPnl,
+                            Leverage = leverage,
+                            PnlPercent = pnlPercent
+                        });
                 }
 
                 return positions;
@@ -760,14 +1066,25 @@ namespace OrderWatchLite.Services
         // Binance 数量/价格精度处理
         // ============================================================
 
-        private async Task<decimal> NormalizeQuantityAsync(string symbol, decimal quantity)
+        private async Task<decimal> NormalizeQuantityAsync(
+            string symbol,
+            decimal quantity)
         {
-            var info = await GetLotSizeInfoAsync(symbol);
-            if (info == null || info.StepSize <= 0)
+            var info =
+                await GetLotSizeInfoAsync(symbol);
+
+            if (info == null ||
+                info.StepSize <= 0)
                 return quantity;
 
-            decimal steps = Math.Floor(quantity / info.StepSize);
-            decimal result = steps * info.StepSize;
+            decimal steps =
+                Math.Floor(
+                    quantity /
+                    info.StepSize);
+
+            decimal result =
+                steps *
+                info.StepSize;
 
             if (result < info.MinQty)
                 return 0m;
@@ -778,65 +1095,118 @@ namespace OrderWatchLite.Services
             return result;
         }
 
-        private async Task<decimal> NormalizePriceAsync(string symbol, decimal price, OrderSide positionSide)
+        private async Task<decimal> NormalizePriceAsync(
+            string symbol,
+            decimal price,
+            OrderSide positionSide)
         {
             if (price <= 0)
                 return 0m;
 
             decimal tickSize = 0m;
+
             lock (_priceTickLock)
             {
-                _priceTickCache.TryGetValue(symbol, out tickSize);
+                _priceTickCache.TryGetValue(
+                    symbol,
+                    out tickSize);
             }
 
             if (tickSize <= 0)
             {
                 try
                 {
-                    string baseUrl = _useTestNet ? "https://testnet.binancefuture.com" : "https://fapi.binance.com";
-                    string json = await _httpClient.GetStringAsync($"{baseUrl}/fapi/v1/exchangeInfo");
-                    using JsonDocument doc = JsonDocument.Parse(json);
-                    foreach (var item in doc.RootElement.GetProperty("symbols").EnumerateArray())
-                    {
-                        if (!item.TryGetProperty("symbol", out var sym) ||
-                            !string.Equals(sym.GetString(), symbol, StringComparison.OrdinalIgnoreCase))
-                            continue;
+                    string baseUrl =
+                        _useTestNet
+                            ? "https://testnet.binancefuture.com"
+                            : "https://fapi.binance.com";
 
-                        if (item.TryGetProperty("filters", out var filters))
+                    string json =
+                        await _httpClient.GetStringAsync(
+                            $"{baseUrl}/fapi/v1/exchangeInfo");
+
+                    using JsonDocument doc =
+                        JsonDocument.Parse(json);
+
+                    foreach (var item in
+                        doc.RootElement
+                            .GetProperty("symbols")
+                            .EnumerateArray())
+                    {
+                        if (!item.TryGetProperty(
+                                "symbol",
+                                out var sym)
+                            ||
+                            !string.Equals(
+                                sym.GetString(),
+                                symbol,
+                                StringComparison.OrdinalIgnoreCase))
                         {
-                            foreach (var filter in filters.EnumerateArray())
+                            continue;
+                        }
+
+                        if (item.TryGetProperty(
+                                "filters",
+                                out var filters))
+                        {
+                            foreach (var filter in
+                                filters.EnumerateArray())
                             {
-                                if (filter.TryGetProperty("filterType", out var ft) &&
-                                    ft.GetString() == "PRICE_FILTER" &&
-                                    filter.TryGetProperty("tickSize", out var ts))
+                                if (
+                                    filter.TryGetProperty(
+                                        "filterType",
+                                        out var ft)
+                                    &&
+                                    ft.GetString() ==
+                                        "PRICE_FILTER"
+                                    &&
+                                    filter.TryGetProperty(
+                                        "tickSize",
+                                        out var ts))
                                 {
-                                    decimal.TryParse(ts.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out tickSize);
+                                    decimal.TryParse(
+                                        ts.GetString(),
+                                        System.Globalization.NumberStyles.Any,
+                                        System.Globalization.CultureInfo.InvariantCulture,
+                                        out tickSize);
+
                                     break;
                                 }
                             }
                         }
+
                         break;
                     }
 
                     if (tickSize > 0)
                     {
                         lock (_priceTickLock)
-                            _priceTickCache[symbol] = tickSize;
+                        {
+                            _priceTickCache[symbol] =
+                                tickSize;
+                        }
                     }
                 }
                 catch
                 {
-                    // 如果交易所信息暂时获取失败，保留原价格；真正下单时 Binance 会返回明确错误。
                 }
             }
 
             if (tickSize <= 0)
                 return price;
 
-            // 止损价格统一向交易所合法 TickSize 对齐。
-            decimal steps = Math.Floor(price / tickSize);
-            decimal result = steps * tickSize;
-            return result > 0 ? result : price;
+            decimal steps =
+                Math.Floor(
+                    price /
+                    tickSize);
+
+            decimal result =
+                steps *
+                tickSize;
+
+            return result > 0
+                ? result
+                : price;
         }
 
         // ============================================================
@@ -859,7 +1229,8 @@ namespace OrderWatchLite.Services
                 }
 
                 var result =
-                    await _restClient.UsdFuturesApi.ExchangeData
+                    await _restClient.UsdFuturesApi
+                        .ExchangeData
                         .GetExchangeInfoAsync();
 
                 if (!result.Success ||
@@ -871,7 +1242,8 @@ namespace OrderWatchLite.Services
                 _exchangeInfoCache =
                     new ExchangeInfoCache
                     {
-                        FetchedAt = DateTime.UtcNow,
+                        FetchedAt =
+                            DateTime.UtcNow,
                         Symbols =
                             result.Data.Symbols.ToList()
                     };
@@ -891,6 +1263,7 @@ namespace OrderWatchLite.Services
         public void Dispose()
         {
             _restClient.Dispose();
+            _httpClient.Dispose();
             _exchangeInfoLock.Dispose();
         }
     }
